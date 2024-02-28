@@ -16,4 +16,4 @@ dist/
 slurm/
 
 # Code that I don't intend to commit.
-ml_for_wildfire_wpo/*.py
+aiwp_derived_fields/*.py
