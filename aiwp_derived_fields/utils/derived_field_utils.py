@@ -10,9 +10,10 @@ from scipy.interpolate import interp1d, InterpolatedUnivariateSpline
 from gewittergefahr.gg_utils import error_checking
 from gewittergefahr.gg_utils import temperature_conversions as temperature_conv
 from gewittergefahr.gg_utils import moisture_conversions as moisture_conv
+from aiwp_derived_fields.utils import model_utils
 from aiwp_derived_fields.outside_code import sharppy_thermo
 
-NUM_SLICES_FOR_MULTIPROCESSING = 16
+NUM_SLICES_FOR_MULTIPROCESSING = 8
 
 HPA_TO_PASCALS = 100.
 PASCALS_TO_HPA = 0.01
@@ -21,15 +22,32 @@ METRES_TO_MM = 1000.
 GRAVITY_M_S02 = 9.80655
 WATER_DENSITY_KG_M03 = 1000.
 
-PRESSURE_HPA_DIM = 'level'
-LATITUDE_DEG_NORTH_DIM = 'latitude'
-LONGITUDE_DEG_EAST_DIM = 'longitude'
+MOST_UNSTABLE_CAPE_NAME = 'most_unstable_cape_j_kg01'
+MOST_UNSTABLE_CIN_NAME = 'most_unstable_cin_j_kg01'
+SURFACE_BASED_CAPE_NAME = 'surface_based_cape_j_kg01'
+SURFACE_BASED_CIN_NAME = 'surface_based_cin_j_kg01'
+MIXED_LAYER_CAPE_NAME = 'mixed_layer_cape_j_kg01'
+MIXED_LAYER_CIN_NAME = 'mixed_layer_cin_j_kg01'
+LIFTED_INDEX_NAME = 'lifted_index_kelvins'
+PRECIPITABLE_WATER_NAME = 'precipitable_water_kg_m02'
+WIND_SHEAR_NAME = 'wind_shear_m_s01'
+ZONAL_WIND_SHEAR_NAME = 'zonal_wind_shear_m_s01'
+MERIDIONAL_WIND_SHEAR_NAME = 'meridional_wind_shear_m_s01'
 
-TEMPERATURE_KELVINS_KEY = 't'
-TEMPERATURE_2METRES_KELVINS_KEY = 't2'
-SPECIFIC_HUMIDITY_KG_KG01_KEY = 'q'
-SEA_LEVEL_PRESSURE_PASCALS_KEY = 'msl'
-GEOPOTENTIAL_M2_S02_KEY = 'z'
+BASIC_FIELD_NAMES_NO_VEC_ELEMENTS = [
+    MOST_UNSTABLE_CAPE_NAME, MOST_UNSTABLE_CIN_NAME,
+    SURFACE_BASED_CAPE_NAME, SURFACE_BASED_CIN_NAME,
+    MIXED_LAYER_CAPE_NAME, MIXED_LAYER_CIN_NAME,
+    LIFTED_INDEX_NAME, PRECIPITABLE_WATER_NAME, WIND_SHEAR_NAME
+]
+
+BASIC_FIELD_NAMES_WITH_VEC_ELEMENTS = (
+    MOST_UNSTABLE_CAPE_NAME, MOST_UNSTABLE_CIN_NAME,
+    SURFACE_BASED_CAPE_NAME, SURFACE_BASED_CIN_NAME,
+    MIXED_LAYER_CAPE_NAME, MIXED_LAYER_CIN_NAME,
+    LIFTED_INDEX_NAME, PRECIPITABLE_WATER_NAME,
+    ZONAL_WIND_SHEAR_NAME, MERIDIONAL_WIND_SHEAR_NAME
+)
 
 
 def __check_for_matching_grids(forecast_table_xarray, aux_data_matrix):
@@ -47,10 +65,10 @@ def __check_for_matching_grids(forecast_table_xarray, aux_data_matrix):
     """
 
     num_grid_rows = len(
-        forecast_table_xarray.coords[LATITUDE_DEG_NORTH_DIM].values
+        forecast_table_xarray.coords[model_utils.LATITUDE_DEG_NORTH_DIM].values
     )
     num_grid_columns = len(
-        forecast_table_xarray.coords[LONGITUDE_DEG_EAST_DIM].values
+        forecast_table_xarray.coords[model_utils.LONGITUDE_DEG_EAST_DIM].values
     )
 
     expected_dim = numpy.array([num_grid_rows, num_grid_columns], dtype=int)
@@ -120,15 +138,14 @@ def __get_model_pressure_matrix(forecast_table_xarray, vertical_axis_first):
     """
 
     num_grid_rows = len(
-        forecast_table_xarray.coords[LATITUDE_DEG_NORTH_DIM].values
+        forecast_table_xarray.coords[model_utils.LATITUDE_DEG_NORTH_DIM].values
     )
     num_grid_columns = len(
-        forecast_table_xarray.coords[LONGITUDE_DEG_EAST_DIM].values
+        forecast_table_xarray.coords[model_utils.LONGITUDE_DEG_EAST_DIM].values
     )
-    pressure_levels_pascals = (
-        HPA_TO_PASCALS *
-        forecast_table_xarray.coords[PRESSURE_HPA_DIM].values.astype(float)
-    )
+    pressure_levels_pascals = HPA_TO_PASCALS * forecast_table_xarray.coords[
+        model_utils.PRESSURE_HPA_DIM
+    ].values.astype(float)
 
     if not vertical_axis_first:
         pressure_matrix_pascals = numpy.repeat(
@@ -333,6 +350,9 @@ def __integrate_to_precipitable_water(
                 numpy.isnan(spec_humidity_matrix_kg_kg01[:, i, j][inds])
             ))[0]
 
+            if len(subinds) < 2:
+                continue
+
             try:
                 precipitable_water_matrix_kg_m02[i, j] = simpson(
                     y=spec_humidity_matrix_kg_kg01[:, i, j][inds][subinds],
@@ -367,7 +387,8 @@ def _pressure_level_to_index(forecast_table_xarray, desired_pressure_pascals):
     """
 
     all_pressures_pascals = numpy.round(
-        HPA_TO_PASCALS * forecast_table_xarray.coords[PRESSURE_HPA_DIM].values
+        HPA_TO_PASCALS *
+        forecast_table_xarray.coords[model_utils.PRESSURE_HPA_DIM].values
     ).astype(int)
 
     desired_pressure_pascals = int(numpy.round(desired_pressure_pascals))
@@ -402,9 +423,9 @@ def _estimate_surface_dewpoint(
         forecast_table_xarray=forecast_table_xarray,
         vertical_axis_first=True
     )
-    spec_humidity_matrix_kg_kg01 = (
-        forecast_table_xarray[SPECIFIC_HUMIDITY_KG_KG01_KEY].values[0, ...]
-    )
+    spec_humidity_matrix_kg_kg01 = forecast_table_xarray[
+        model_utils.SPECIFIC_HUMIDITY_KG_KG01_KEY
+    ].values[0, ...]
 
     exec_start_time_unix_sec = time.time()
 
@@ -452,9 +473,10 @@ def _estimate_surface_dewpoint(
         time.time() - exec_start_time_unix_sec
     ))
 
-    surface_temp_matrix_kelvins = (
-        forecast_table_xarray[TEMPERATURE_2METRES_KELVINS_KEY].values[0, ...]
-    )
+    surface_temp_matrix_kelvins = forecast_table_xarray[
+        model_utils.TEMPERATURE_2METRES_KELVINS_KEY
+    ].values[0, ...]
+
     return moisture_conv.specific_humidity_to_dewpoint(
         specific_humidities_kg_kg01=surface_spec_humidity_matrix_kg_kg01,
         temperatures_kelvins=surface_temp_matrix_kelvins,
@@ -491,9 +513,10 @@ def _estimate_surface_pressure(
 
     # Create pressure matrix with dimensions (V + 1) x M x N, using sea-level
     # pressures from model.
-    sea_level_pressure_matrix_pascals = (
-        forecast_table_xarray[SEA_LEVEL_PRESSURE_PASCALS_KEY].values[0, ...]
-    )
+    sea_level_pressure_matrix_pascals = forecast_table_xarray[
+        model_utils.SEA_LEVEL_PRESSURE_PASCALS_KEY
+    ].values[0, ...]
+
     pressure_matrix_pascals = numpy.concatenate([
         pressure_matrix_pascals,
         numpy.expand_dims(sea_level_pressure_matrix_pascals, axis=0)
@@ -501,9 +524,10 @@ def _estimate_surface_pressure(
 
     # Create geopotential matrix with dimensions (V + 1) x M x N, using the fact
     # that geopotential = 0 at sea level by definition.
-    geopotential_matrix_m2_s02 = (
-        forecast_table_xarray[GEOPOTENTIAL_M2_S02_KEY].values[0, ...]
-    )
+    geopotential_matrix_m2_s02 = forecast_table_xarray[
+        model_utils.GEOPOTENTIAL_M2_S02_KEY
+    ].values[0, ...]
+
     sea_level_geopotential_matrix_m2_s02 = numpy.zeros_like(
         geopotential_matrix_m2_s02[[0], ...]
     )
@@ -559,6 +583,108 @@ def _estimate_surface_pressure(
     ))
 
     return surface_pressure_matrix_pascals
+
+
+def parse_field_name(derived_field_name, is_field_to_compute):
+    """Parses name of derived field.
+
+    :param derived_field_name: Name of derived field.
+    :param is_field_to_compute: Boolean flag.  If True, the field is something
+        to be computed but not yet computed.  If False, the field is something
+        already computed.
+    :return: metadata_dict: Dictionary with the following keys.
+    metadata_dict["basic_field_name"]: Name of basic field, without any options.
+    metadata_dict["mixed_layer_depth_metres"]: Mixed-layer depth (only for
+        mixed-layer CAPE or CIN; otherwise, None).
+    metadata_dict["top_pressure_pascals"]: Top pressure level (only for certain
+        fields; otherwise, None).
+    metadata_dict["bottom_pressure_pascals"]: Bottom pressure level (only for
+        certain fields; otherwise, None).
+    """
+
+    # TODO(thunderhoser): Dict keys should be constants.
+    # TODO(thunderhoser): Needs unit test.
+
+    error_checking.assert_is_string(derived_field_name)
+    error_checking.assert_is_boolean(is_field_to_compute)
+
+    valid_field_names = (
+        BASIC_FIELD_NAMES_NO_VEC_ELEMENTS if is_field_to_compute
+        else BASIC_FIELD_NAMES_WITH_VEC_ELEMENTS
+    )
+
+    basic_field_name = None
+    for f in valid_field_names:
+        if derived_field_name.startswith(f):
+            basic_field_name = f
+            break
+
+    if basic_field_name is None:
+        error_string = (
+            'Cannot find basic field name in string "{0:s}".  The string '
+            'should start with one of the following:\n{1:s}'
+        ).format(
+            derived_field_name,
+            str(valid_field_names)
+        )
+
+        raise ValueError(error_string)
+
+    metadata_dict = {
+        'basic_field_name': basic_field_name,
+        'mixed_layer_depth_metres': None,
+        'top_pressure_pascals': None,
+        'bottom_pressure_pascals': None
+    }
+
+    if basic_field_name in [MIXED_LAYER_CAPE_NAME, MIXED_LAYER_CIN_NAME]:
+        end_of_field_name = derived_field_name.replace(
+            basic_field_name + '_', '', 1
+        )
+        assert '_' not in end_of_field_name
+        assert end_of_field_name.startswith('ml-depth-metres=')
+
+        end_of_field_name = end_of_field_name.replace('ml-depth-metres=', '', 1)
+        metadata_dict['mixed_layer_depth_metres'] = float(end_of_field_name)
+        assert metadata_dict['mixed_layer_depth_metres'] > 0.
+
+        return metadata_dict
+
+    end_of_field_name = None
+
+    if basic_field_name in [
+            LIFTED_INDEX_NAME, PRECIPITABLE_WATER_NAME, WIND_SHEAR_NAME,
+            ZONAL_WIND_SHEAR_NAME, MERIDIONAL_WIND_SHEAR_NAME
+    ]:
+        end_of_field_name = derived_field_name.replace(
+            basic_field_name + '_', '', 1
+        )
+        assert end_of_field_name.startswith('top-pressure-pascals=')
+
+        end_of_field_name = end_of_field_name.replace(
+            'top-pressure-pascals=', '', 1
+        )
+        metadata_dict['top_pressure_pascals'] = int(
+            end_of_field_name.split('_')[0]
+        )
+        assert metadata_dict['top_pressure_pascals'] > 0
+
+    if basic_field_name not in [
+            WIND_SHEAR_NAME, ZONAL_WIND_SHEAR_NAME, MERIDIONAL_WIND_SHEAR_NAME
+    ]:
+        return metadata_dict
+
+    end_of_field_name = end_of_field_name.split('_')[1]
+    assert '_' not in end_of_field_name
+    assert end_of_field_name.startswith('bottom-pressure-pascals=')
+
+    end_of_field_name = end_of_field_name.replace(
+        'bottom-pressure-pascals=', '', 1
+    )
+    metadata_dict['bottom_pressure_pascals'] = int(end_of_field_name)
+    assert metadata_dict['bottom_pressure_pascals'] > 0
+
+    return metadata_dict
 
 
 def get_cape_and_cin(
@@ -630,20 +756,21 @@ def get_cape_and_cin(
         error_checking.assert_is_greater(mixed_layer_depth_metres, 0.)
 
     # Extract pressure, temperature, and humidity data from model.
-    pressure_levels_pascals = (
-        HPA_TO_PASCALS *
-        forecast_table_xarray.coords[PRESSURE_HPA_DIM].values.astype(float)
-    )
+    pressure_levels_pascals = HPA_TO_PASCALS * forecast_table_xarray.coords[
+        model_utils.PRESSURE_HPA_DIM
+    ].values.astype(float)
 
-    temp_matrix_kelvins = (
-        forecast_table_xarray[TEMPERATURE_KELVINS_KEY].values[0, ...]
-    )
-    spec_humidity_matrix_kg_kg01 = (
-        forecast_table_xarray[SPECIFIC_HUMIDITY_KG_KG01_KEY].values[0, ...]
-    )
-    surface_temp_matrix_kelvins = (
-        forecast_table_xarray[TEMPERATURE_2METRES_KELVINS_KEY].values[0, ...]
-    )
+    temp_matrix_kelvins = forecast_table_xarray[
+        model_utils.TEMPERATURE_KELVINS_KEY
+    ].values[0, ...]
+
+    spec_humidity_matrix_kg_kg01 = forecast_table_xarray[
+        model_utils.SPECIFIC_HUMIDITY_KG_KG01_KEY
+    ].values[0, ...]
+
+    surface_temp_matrix_kelvins = forecast_table_xarray[
+        model_utils.TEMPERATURE_2METRES_KELVINS_KEY
+    ].values[0, ...]
 
     # Current array shape is pressure x lat x long.
     # xcape requires lat x long x pressure.
@@ -699,11 +826,19 @@ def get_cape_and_cin(
         for s, e in zip(start_rows, end_rows):
             argument_list.append((
                 PASCALS_TO_HPA * pressure_levels_pascals,
-                temperature_conv.kelvins_to_celsius(temp_matrix_kelvins[s:e, ...]),
-                temperature_conv.kelvins_to_celsius(dewpoint_matrix_kelvins[s:e, ...]),
+                temperature_conv.kelvins_to_celsius(
+                    temp_matrix_kelvins[s:e, ...]
+                ),
+                temperature_conv.kelvins_to_celsius(
+                    dewpoint_matrix_kelvins[s:e, ...]
+                ),
                 PASCALS_TO_HPA * surface_pressure_matrix_pascals[s:e, ...],
-                temperature_conv.kelvins_to_celsius(surface_temp_matrix_kelvins[s:e, ...]),
-                temperature_conv.kelvins_to_celsius(surface_dewpoint_matrix_kelvins[s:e, ...])
+                temperature_conv.kelvins_to_celsius(
+                    surface_temp_matrix_kelvins[s:e, ...]
+                ),
+                temperature_conv.kelvins_to_celsius(
+                    surface_dewpoint_matrix_kelvins[s:e, ...]
+                )
             ))
 
             keyword_argument_list.append({
@@ -752,7 +887,9 @@ def get_cape_and_cin(
             temperature_conv.kelvins_to_celsius(dewpoint_matrix_kelvins),
             PASCALS_TO_HPA * surface_pressure_matrix_pascals,
             temperature_conv.kelvins_to_celsius(surface_temp_matrix_kelvins),
-            temperature_conv.kelvins_to_celsius(surface_dewpoint_matrix_kelvins),
+            temperature_conv.kelvins_to_celsius(
+                surface_dewpoint_matrix_kelvins
+            ),
             source=parcel_source_string,
             ml_depth=(
                 500. if mixed_layer_depth_metres is None
@@ -834,9 +971,10 @@ def get_lifted_index(
         )
 
     # Compute temperature of lifted parcel at each horizontal grid point.
-    surface_temp_matrix_kelvins = (
-        forecast_table_xarray[TEMPERATURE_2METRES_KELVINS_KEY].values[0, ...]
-    )
+    surface_temp_matrix_kelvins = forecast_table_xarray[
+        model_utils.TEMPERATURE_2METRES_KELVINS_KEY
+    ].values[0, ...]
+
     final_pressure_matrix_pascals = numpy.full(
         surface_temp_matrix_kelvins.shape, final_pressure_pascals
     )
@@ -854,7 +992,9 @@ def get_lifted_index(
         for s, e in zip(start_rows, end_rows):
             argument_list.append((
                 PASCALS_TO_HPA * surface_pressure_matrix_pascals[s:e, ...],
-                temperature_conv.kelvins_to_celsius(surface_temp_matrix_kelvins[s:e, ...]),
+                temperature_conv.kelvins_to_celsius(
+                    surface_temp_matrix_kelvins[s:e, ...]
+                ),
                 PASCALS_TO_HPA * final_pressure_matrix_pascals[s:e, ...]
             ))
 
@@ -909,9 +1049,14 @@ def get_lifted_index(
         )
     )
 
+    bad_layer_flag_matrix = (
+        final_pressure_matrix_pascals >= surface_pressure_matrix_pascals
+    )
+    lifted_virtual_temp_matrix_kelvins[bad_layer_flag_matrix] = numpy.nan
+
     # Determine actual (not lifted) virtual temperature at final pressure level.
     unlifted_spec_humidity_matrix_kg_kg01 = (
-        forecast_table_xarray[SPECIFIC_HUMIDITY_KG_KG01_KEY].values[
+        forecast_table_xarray[model_utils.SPECIFIC_HUMIDITY_KG_KG01_KEY].values[
             0, p_index, ...
         ]
     )
@@ -929,9 +1074,9 @@ def get_lifted_index(
         )
     )
 
-    unlifted_temp_matrix_kelvins = (
-        forecast_table_xarray[TEMPERATURE_KELVINS_KEY].values[0, p_index, ...]
-    )
+    unlifted_temp_matrix_kelvins = forecast_table_xarray[
+        model_utils.TEMPERATURE_KELVINS_KEY
+    ].values[0, p_index, ...]
 
     unlifted_virtual_temp_matrix_kelvins = (
         moisture_conv.temperature_to_virtual_temperature(
@@ -1021,9 +1166,10 @@ def get_precipitable_water(
         )
 
     # Convert surface dewpoint to surface specific humidity.
-    surface_temp_matrix_kelvins = (
-        forecast_table_xarray[TEMPERATURE_2METRES_KELVINS_KEY].values[0, ...]
-    )
+    surface_temp_matrix_kelvins = forecast_table_xarray[
+        model_utils.TEMPERATURE_2METRES_KELVINS_KEY
+    ].values[0, ...]
+
     surface_spec_humidity_matrix_kg_kg01 = (
         moisture_conv.dewpoint_to_specific_humidity(
             dewpoints_kelvins=surface_dewpoint_matrix_kelvins,
@@ -1040,15 +1186,15 @@ def get_precipitable_water(
     pressure_matrix_pascals = pressure_matrix_pascals[:top_p_index, ...]
 
     spec_humidity_matrix_kg_kg01 = forecast_table_xarray[
-        SPECIFIC_HUMIDITY_KG_KG01_KEY
+        model_utils.SPECIFIC_HUMIDITY_KG_KG01_KEY
     ].values[0, :top_p_index, ...]
 
-    # Specific humidity = 0 at all levels below the surface.
+    # Mask out specific humidity below the surface.
     surface_pressure_matrix_3d_pascals = numpy.expand_dims(
         surface_pressure_matrix_pascals, axis=0
     )
     spec_humidity_matrix_kg_kg01[
-        pressure_matrix_pascals > surface_pressure_matrix_3d_pascals
+        pressure_matrix_pascals >= surface_pressure_matrix_3d_pascals
     ] = numpy.nan
 
     # Current array shape is V x M x N, where M = number of rows and N = number
@@ -1099,7 +1245,7 @@ def get_precipitable_water(
             spec_humidity_matrix_kg_kg01=spec_humidity_matrix_kg_kg01
         )
 
-    assert numpy.all(precipitable_water_matrix_kg_m02 >= 0.)
+    assert not numpy.any(precipitable_water_matrix_kg_m02 < 0.)
 
     print('Estimating precipitable water took {0:.1f} seconds.'.format(
         time.time() - exec_start_time_unix_sec
@@ -1109,4 +1255,115 @@ def get_precipitable_water(
         precipitable_water_matrix_kg_m02,
         surface_pressure_matrix_pascals,
         surface_dewpoint_matrix_kelvins
+    )
+
+
+def get_wind_shear(
+        forecast_table_xarray, do_multiprocessing,
+        bottom_pressure_pascals, top_pressure_pascals,
+        surface_geopotential_matrix_m2_s02=None,
+        surface_pressure_matrix_pascals=None):
+    """Computes vertical wind shear between two levels.
+
+    M = number of rows (latitudes) in grid
+    N = number of columns (longitudes) in grid
+
+    :param forecast_table_xarray: See documentation for `get_cape_and_cin`.
+    :param do_multiprocessing: Same.
+    :param bottom_pressure_pascals: Pressure at bottom of layer.  This can also
+        be "surface" (a string).
+    :param top_pressure_pascals: Pressure at top of layer.
+    :param surface_geopotential_matrix_m2_s02: See documentation for
+        `get_cape_and_cin`.
+    :param surface_pressure_matrix_pascals: Same.
+    :return: zonal_wind_shear_matrix_m_s01: M-by-N numpy array of zonal wind
+        shears (metres per second).
+    :return: merid_wind_shear_matrix_m_s01: M-by-N numpy array of meridional
+        wind shears (metres per second).
+    :return: surface_pressure_matrix_pascals: M-by-N numpy array of surface
+        pressures.
+    """
+
+    # Check input args.
+    if surface_geopotential_matrix_m2_s02 is not None:
+        __check_for_matching_grids(
+            forecast_table_xarray=forecast_table_xarray,
+            aux_data_matrix=surface_geopotential_matrix_m2_s02
+        )
+    if surface_pressure_matrix_pascals is not None:
+        __check_for_matching_grids(
+            forecast_table_xarray=forecast_table_xarray,
+            aux_data_matrix=surface_pressure_matrix_pascals
+        )
+
+    is_bottom_surface = False
+
+    if isinstance(bottom_pressure_pascals, str):
+        assert bottom_pressure_pascals == 'surface'
+        bottom_index = None
+        is_bottom_surface = True
+    else:
+        bottom_index = _pressure_level_to_index(
+            forecast_table_xarray=forecast_table_xarray,
+            desired_pressure_pascals=bottom_pressure_pascals
+        )
+
+    top_index = _pressure_level_to_index(
+        forecast_table_xarray=forecast_table_xarray,
+        desired_pressure_pascals=top_pressure_pascals
+    )
+
+    # Estimate surface pressure, if necessary.
+    if surface_pressure_matrix_pascals is None and is_bottom_surface:
+        surface_pressure_matrix_pascals = _estimate_surface_pressure(
+            forecast_table_xarray=forecast_table_xarray,
+            surface_geopotential_matrix_m2_s02=
+            surface_geopotential_matrix_m2_s02,
+            do_multiprocessing=do_multiprocessing,
+            use_spline=True
+        )
+
+    # Do actual stuff.
+    if is_bottom_surface:
+        bottom_zonal_wind_matrix_m_s01 = forecast_table_xarray[
+            model_utils.ZONAL_WIND_10METRES_M_S01_KEY
+        ].values[0, ...]
+
+        bottom_merid_wind_matrix_m_s01 = forecast_table_xarray[
+            model_utils.MERIDIONAL_WIND_10METRES_M_S01_KEY
+        ].values[0, ...]
+
+        # Mask out locations where layer top is below surface.
+        pressure_matrix_pascals = __get_model_pressure_matrix(
+            forecast_table_xarray=forecast_table_xarray,
+            vertical_axis_first=True
+        )
+        top_pressure_matrix_pascals = pressure_matrix_pascals[top_index, ...]
+
+        bad_layer_flag_matrix = (
+            top_pressure_matrix_pascals >= surface_pressure_matrix_pascals
+        )
+        bottom_zonal_wind_matrix_m_s01[bad_layer_flag_matrix] = numpy.nan
+        bottom_merid_wind_matrix_m_s01[bad_layer_flag_matrix] = numpy.nan
+    else:
+        bottom_zonal_wind_matrix_m_s01 = forecast_table_xarray[
+            model_utils.ZONAL_WIND_M_S01_KEY
+        ].values[0, bottom_index, ...]
+
+        bottom_merid_wind_matrix_m_s01 = forecast_table_xarray[
+            model_utils.MERIDIONAL_WIND_M_S01_KEY
+        ].values[0, bottom_index, ...]
+
+    top_zonal_wind_matrix_m_s01 = forecast_table_xarray[
+        model_utils.ZONAL_WIND_M_S01_KEY
+    ].values[0, top_index, ...]
+
+    top_merid_wind_matrix_m_s01 = forecast_table_xarray[
+        model_utils.MERIDIONAL_WIND_M_S01_KEY
+    ].values[0, top_index, ...]
+
+    return (
+        top_zonal_wind_matrix_m_s01 - bottom_zonal_wind_matrix_m_s01,
+        top_merid_wind_matrix_m_s01 - bottom_merid_wind_matrix_m_s01,
+        surface_pressure_matrix_pascals
     )
