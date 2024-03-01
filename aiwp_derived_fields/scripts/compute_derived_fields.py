@@ -1,11 +1,18 @@
 """Computes derived fields."""
 
+import os
+import copy
 import argparse
+import numpy
+import xarray
 from gewittergefahr.gg_utils import time_conversion
 from gewittergefahr.gg_utils import file_system_utils
 from aiwp_derived_fields.io import basic_field_io
 from aiwp_derived_fields.io import era5_constants_io
+from aiwp_derived_fields.utils import model_utils
 from aiwp_derived_fields.utils import derived_field_utils
+
+# TODO(thunderhoser): Need derived_field_io.py.
 
 TIME_FORMAT = '%Y-%m-%d-%H'
 
@@ -41,8 +48,6 @@ OUTPUT_DIR_HELP_STRING = (
     'Path to output directory.  Derived fields will be written to a NetCDF '
     'file here.'
 )
-
-# TODO(thunderhoser): Need IO code for derived fields.
 
 INPUT_ARG_PARSER = argparse.ArgumentParser()
 INPUT_ARG_PARSER.add_argument(
@@ -84,10 +89,30 @@ def _run(input_dir_name, model_name, init_time_string, do_multiprocessing,
     :param output_dir_name: Same.
     """
 
+    # Check/process input args.
+    metadata_dict_by_field = [
+        derived_field_utils.parse_field_name(
+            derived_field_name=f, is_field_to_compute=True
+        )
+        for f in derived_field_names
+    ]
+    derived_field_names = [
+        derived_field_utils.create_field_name(m)
+        for m in metadata_dict_by_field
+    ]
+
+    _, unique_indices = numpy.unique(
+        numpy.array(derived_field_names), return_index=True
+    )
+    derived_field_names = [derived_field_names[k] for k in unique_indices]
+    metadata_dict_by_field = [metadata_dict_by_field[k] for k in unique_indices]
+    num_fields = len(derived_field_names)
+
     file_system_utils.mkdir_recursive_if_necessary(
         directory_name=output_dir_name
     )
 
+    # Read inputs (basic weather fields).
     input_file_name = basic_field_io.find_file(
         directory_name=input_dir_name,
         model_name=model_name,
@@ -100,29 +125,26 @@ def _run(input_dir_name, model_name, init_time_string, do_multiprocessing,
     print('Reading data from: "{0:s}"...'.format(input_file_name))
     forecast_table_xarray = basic_field_io.read_file(input_file_name)
 
-    metadata_dict_by_field = [
-        derived_field_utils.parse_field_name(
-            derived_field_name=f, is_field_to_compute=True
-        )
-        for f in derived_field_names
-    ]
-    num_fields = len(derived_field_names)
-
+    # Read surface-geopotential field.  This might be needed to compute some
+    # derived fields.
     surface_geopotential_matrix_m2_s02 = (
         era5_constants_io.read_surface_geopotential(forecast_table_xarray)
     )
     surface_pressure_matrix_pascals = None
     surface_dewpoint_matrix_kelvins = None
 
+    # Compute the derived fields.
     new_derived_field_names = []
     new_derived_field_matrices = []
 
     for j in range(num_fields):
-        # TODO(thunderhoser): parcel_source needs to be in dict.
+        if derived_field_names[j] in new_derived_field_names:
+            continue
 
-        # TODO(thunderhoser): Keep track of which fields are done.
-
-        this_basic_field_name = metadata_dict_by_field[j]['basic_field_name']
+        this_meta_dict = metadata_dict_by_field[j]
+        this_basic_field_name = (
+            this_meta_dict[derived_field_utils.BASIC_FIELD_KEY]
+        )
 
         if this_basic_field_name in derived_field_utils.CAPE_CIN_NAMES:
             (
@@ -134,20 +156,51 @@ def _run(input_dir_name, model_name, init_time_string, do_multiprocessing,
                 forecast_table_xarray=forecast_table_xarray,
                 do_multiprocessing=do_multiprocessing,
                 parcel_source_string=
-                metadata_dict_by_field[j]['parcel_source_string'],
+                this_meta_dict[derived_field_utils.PARCEL_SOURCE_KEY],
                 mixed_layer_depth_metres=
-                metadata_dict_by_field[j]['mixed_layer_depth_metres'],
+                this_meta_dict[derived_field_utils.MIXED_LAYER_DEPTH_KEY],
                 surface_geopotential_matrix_m2_s02=
                 surface_geopotential_matrix_m2_s02,
                 surface_pressure_matrix_pascals=surface_pressure_matrix_pascals,
                 surface_dewpoint_matrix_kelvins=surface_dewpoint_matrix_kelvins
             )
 
-            new_field_name = 'something'  # TODO: with create_field_name
+            this_ps = this_meta_dict[derived_field_utils.PARCEL_SOURCE_KEY]
+            if this_ps == derived_field_utils.MIXED_LAYER_PARCEL_SOURCE_STRING:
+                this_meta_dict[derived_field_utils.BASIC_FIELD_KEY] = (
+                    derived_field_utils.MIXED_LAYER_CAPE_NAME
+                )
+            elif this_ps == derived_field_utils.MOST_UNSTABLE_PARCEL_SOURCE_STRING:
+                this_meta_dict[derived_field_utils.BASIC_FIELD_KEY] = (
+                    derived_field_utils.MOST_UNSTABLE_CAPE_NAME
+                )
+            else:
+                this_meta_dict[derived_field_utils.BASIC_FIELD_KEY] = (
+                    derived_field_utils.SURFACE_BASED_CAPE_NAME
+                )
+
+            new_field_name = derived_field_utils.create_field_name(
+                this_meta_dict
+            )
             new_derived_field_names.append(new_field_name)
             new_derived_field_matrices.append(this_cape_matrix_j_kg01)
 
-            new_field_name = 'something'  # TODO: with create_field_name
+            if this_ps == derived_field_utils.MIXED_LAYER_PARCEL_SOURCE_STRING:
+                this_meta_dict[derived_field_utils.BASIC_FIELD_KEY] = (
+                    derived_field_utils.MIXED_LAYER_CIN_NAME
+                )
+            elif this_ps == derived_field_utils.MOST_UNSTABLE_PARCEL_SOURCE_STRING:
+                this_meta_dict[derived_field_utils.BASIC_FIELD_KEY] = (
+                    derived_field_utils.MOST_UNSTABLE_CIN_NAME
+                )
+            else:
+                this_meta_dict[derived_field_utils.BASIC_FIELD_KEY] = (
+                    derived_field_utils.SURFACE_BASED_CIN_NAME
+                )
+
+            new_field_name = derived_field_utils.create_field_name(
+                this_meta_dict
+            )
             new_derived_field_names.append(new_field_name)
             new_derived_field_matrices.append(this_cin_matrix_j_kg01)
 
@@ -159,7 +212,7 @@ def _run(input_dir_name, model_name, init_time_string, do_multiprocessing,
                 forecast_table_xarray=forecast_table_xarray,
                 do_multiprocessing=do_multiprocessing,
                 final_pressure_pascals=
-                metadata_dict_by_field[j]['top_pressure_pascals'],
+                this_meta_dict[derived_field_utils.TOP_PRESSURE_KEY],
                 surface_geopotential_matrix_m2_s02=
                 surface_geopotential_matrix_m2_s02,
                 surface_pressure_matrix_pascals=surface_pressure_matrix_pascals
@@ -177,7 +230,7 @@ def _run(input_dir_name, model_name, init_time_string, do_multiprocessing,
                 forecast_table_xarray=forecast_table_xarray,
                 do_multiprocessing=do_multiprocessing,
                 top_pressure_pascals=
-                metadata_dict_by_field[j]['top_pressure_pascals'],
+                this_meta_dict[derived_field_utils.TOP_PRESSURE_KEY],
                 surface_geopotential_matrix_m2_s02=
                 surface_geopotential_matrix_m2_s02,
                 surface_pressure_matrix_pascals=surface_pressure_matrix_pascals,
@@ -187,7 +240,7 @@ def _run(input_dir_name, model_name, init_time_string, do_multiprocessing,
             new_derived_field_names.append(derived_field_names[j])
             new_derived_field_matrices.append(this_pw_matrix_kg_m02)
 
-        elif this_basic_field_name == derived_field_utils.WIND_SHEAR_NAME:
+        elif this_basic_field_name == derived_field_utils.SCALAR_WIND_SHEAR_NAME:
             (
                 this_zonal_shear_matrix_m_s01,
                 this_merid_shear_matrix_m_s01,
@@ -196,23 +249,62 @@ def _run(input_dir_name, model_name, init_time_string, do_multiprocessing,
                 forecast_table_xarray=forecast_table_xarray,
                 do_multiprocessing=do_multiprocessing,
                 bottom_pressure_pascals=
-                metadata_dict_by_field[j]['bottom_pressure_pascals'],
+                this_meta_dict[derived_field_utils.BOTTOM_PRESSURE_KEY],
                 top_pressure_pascals=
-                metadata_dict_by_field[j]['top_pressure_pascals'],
+                this_meta_dict[derived_field_utils.TOP_PRESSURE_KEY],
                 surface_geopotential_matrix_m2_s02=
                 surface_geopotential_matrix_m2_s02,
                 surface_pressure_matrix_pascals=surface_pressure_matrix_pascals
             )
 
-            new_field_name = 'something'  # TODO: with create_field_name
+            this_meta_dict[derived_field_utils.BASIC_FIELD_KEY] = (
+                derived_field_utils.ZONAL_WIND_SHEAR_NAME
+            )
+            new_field_name = derived_field_utils.create_field_name(
+                this_meta_dict
+            )
             new_derived_field_names.append(new_field_name)
             new_derived_field_matrices.append(this_zonal_shear_matrix_m_s01)
 
-            new_field_name = 'something'  # TODO: with create_field_name
+            this_meta_dict[derived_field_utils.BASIC_FIELD_KEY] = (
+                derived_field_utils.MERIDIONAL_WIND_SHEAR_NAME
+            )
+            new_field_name = derived_field_utils.create_field_name(
+                this_meta_dict
+            )
             new_derived_field_names.append(new_field_name)
             new_derived_field_matrices.append(this_merid_shear_matrix_m_s01)
 
-    # TODO(thunderhoser): Put the outputs in an xarray table and write to file.
+    derived_field_names = copy.deepcopy(new_derived_field_names)
+    derived_field_matrix = numpy.stack(new_derived_field_matrices, axis=-1)
+
+    coord_dict = {
+        'latitude_deg_n': forecast_table_xarray.coords[
+            model_utils.LATITUDE_DEG_NORTH_DIM
+        ].values,
+        'longitude_deg_e': forecast_table_xarray.coords[
+            model_utils.LONGITUDE_DEG_EAST_DIM
+        ].values,
+        'field_name': derived_field_names
+    }
+
+    these_dim = ('latitude_deg_n', 'longitude_deg_e', 'field_name')
+    main_data_dict = {
+        'data': (these_dim, derived_field_matrix)
+    }
+
+    derived_field_table_xarray = xarray.Dataset(
+        data_vars=main_data_dict, coords=coord_dict
+    )
+    output_file_name = '{0:s}/{1:s}'.format(
+        output_dir_name,
+        os.path.split(input_file_name)[1]
+    )
+
+    print('Writing results to: "{0:s}"...'.format(output_file_name))
+    derived_field_table_xarray.to_netcdf(
+        path=output_file_name, mode='w', format='NETCDF3_64BIT'
+    )
 
 
 if __name__ == '__main__':

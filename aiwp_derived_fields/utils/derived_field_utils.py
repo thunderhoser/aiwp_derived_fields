@@ -21,6 +21,7 @@ METRES_TO_MM = 1000.
 
 GRAVITY_M_S02 = 9.80655
 WATER_DENSITY_KG_M03 = 1000.
+EARTH_RADIUS_METRES = 6371222.9
 
 MOST_UNSTABLE_CAPE_NAME = 'most_unstable_cape_j_kg01'
 MOST_UNSTABLE_CIN_NAME = 'most_unstable_cin_j_kg01'
@@ -30,24 +31,39 @@ MIXED_LAYER_CAPE_NAME = 'mixed_layer_cape_j_kg01'
 MIXED_LAYER_CIN_NAME = 'mixed_layer_cin_j_kg01'
 LIFTED_INDEX_NAME = 'lifted_index_kelvins'
 PRECIPITABLE_WATER_NAME = 'precipitable_water_kg_m02'
-WIND_SHEAR_NAME = 'wind_shear_m_s01'
+SCALAR_WIND_SHEAR_NAME = 'scalar_wind_shear_m_s01'
 ZONAL_WIND_SHEAR_NAME = 'zonal_wind_shear_m_s01'
 MERIDIONAL_WIND_SHEAR_NAME = 'meridional_wind_shear_m_s01'
 
-BASIC_FIELD_NAMES_NO_VEC_ELEMENTS = [
+CAPE_CIN_NAMES = [
     MOST_UNSTABLE_CAPE_NAME, MOST_UNSTABLE_CIN_NAME,
     SURFACE_BASED_CAPE_NAME, SURFACE_BASED_CIN_NAME,
-    MIXED_LAYER_CAPE_NAME, MIXED_LAYER_CIN_NAME,
-    LIFTED_INDEX_NAME, PRECIPITABLE_WATER_NAME, WIND_SHEAR_NAME
+    MIXED_LAYER_CAPE_NAME, MIXED_LAYER_CIN_NAME
 ]
-
-BASIC_FIELD_NAMES_WITH_VEC_ELEMENTS = (
-    MOST_UNSTABLE_CAPE_NAME, MOST_UNSTABLE_CIN_NAME,
-    SURFACE_BASED_CAPE_NAME, SURFACE_BASED_CIN_NAME,
-    MIXED_LAYER_CAPE_NAME, MIXED_LAYER_CIN_NAME,
+BASIC_FIELD_NAMES_NO_VEC_ELEMENTS = CAPE_CIN_NAMES + [
+    LIFTED_INDEX_NAME, PRECIPITABLE_WATER_NAME, SCALAR_WIND_SHEAR_NAME
+]
+BASIC_FIELD_NAMES_WITH_VEC_ELEMENTS = CAPE_CIN_NAMES + [
     LIFTED_INDEX_NAME, PRECIPITABLE_WATER_NAME,
     ZONAL_WIND_SHEAR_NAME, MERIDIONAL_WIND_SHEAR_NAME
-)
+]
+WIND_SHEAR_NAMES = [
+    SCALAR_WIND_SHEAR_NAME, ZONAL_WIND_SHEAR_NAME, MERIDIONAL_WIND_SHEAR_NAME
+]
+
+BASIC_FIELD_KEY = 'basic_field_name'
+PARCEL_SOURCE_KEY = 'parcel_source_string'
+MIXED_LAYER_DEPTH_KEY = 'mixed_layer_depth_metres'
+TOP_PRESSURE_KEY = 'top_pressure_pascals'
+BOTTOM_PRESSURE_KEY = 'bottom_pressure_pascals'
+
+SURFACE_PARCEL_SOURCE_STRING = 'surface'
+MIXED_LAYER_PARCEL_SOURCE_STRING = 'mixed-layer'
+MOST_UNSTABLE_PARCEL_SOURCE_STRING = 'most-unstable'
+PARCEL_SOURCE_STRINGS = [
+    SURFACE_PARCEL_SOURCE_STRING, MIXED_LAYER_PARCEL_SOURCE_STRING,
+    MOST_UNSTABLE_PARCEL_SOURCE_STRING
+]
 
 
 def __check_for_matching_grids(forecast_table_xarray, aux_data_matrix):
@@ -169,6 +185,218 @@ def __get_model_pressure_matrix(forecast_table_xarray, vertical_axis_first):
     )
 
     return pressure_matrix_pascals
+
+
+def __height_agl_to_nearest_pressure_level(
+        geopotential_matrix_m2_s02, surface_geopotential_matrix_m2_s02,
+        desired_height_m_agl):
+    """At every horizontal grid point, finds nearest p-level to a given height.
+
+    This is a ground-relative height, specifically.
+
+    M = number of rows (latitudes) in grid
+    N = number of columns (longitudes) in grid
+    V = number of vertical levels in grid
+
+    :param geopotential_matrix_m2_s02: V-by-M-by-N numpy array of geopotentials.
+    :param surface_geopotential_matrix_m2_s02: M-by-N numpy array of surface
+        geopotentials.
+    :param desired_height_m_agl: Desired height (metres above ground level).
+    :return: vertical_index_matrix: M-by-N numpy array of indices.  These are
+        non-negative array indices into the first axis of
+        `geopotential_matrix_m2_s02`, indicating the vertical level nearest to
+        the desired ground-relative height.
+    """
+
+    # TODO(thunderhoser): Deal with subsurface levels somewhere -- but not here.
+
+    numerator = GRAVITY_M_S02 * EARTH_RADIUS_METRES * desired_height_m_agl
+    denominator = EARTH_RADIUS_METRES - desired_height_m_agl
+    desired_sfc_relative_geoptl_m2_s02 = numerator / denominator
+    desired_geopotential_matrix_m2_s02 = (
+        surface_geopotential_matrix_m2_s02 + desired_sfc_relative_geoptl_m2_s02
+    )
+
+    return numpy.argmin(
+        numpy.absolute(
+            geopotential_matrix_m2_s02 -
+            numpy.expand_dims(desired_geopotential_matrix_m2_s02, axis=0)
+        ),
+        axis=0
+    )
+
+
+def __get_mean_wind(
+        zonal_wind_matrix_m_s01, meridional_wind_matrix_m_s01,
+        bottom_index_matrix, top_index_matrix, pressure_weighted,
+        pressure_matrix_pascals=None):
+    """At every horizontal grid point, computes mean wind between two levels.
+
+    M = number of rows (latitudes) in grid
+    N = number of columns (longitudes) in grid
+    V = number of vertical levels in grid
+
+    :param zonal_wind_matrix_m_s01: V-by-M-by-N numpy array of zonal wind speeds
+        (metres per second).
+    :param meridional_wind_matrix_m_s01: V-by-M-by-N numpy array of meridional
+        wind speeds (metres per second).
+    :param bottom_index_matrix: M-by-N numpy array of non-negative integers,
+        indexing the bottom of the layer at each horizontal grid point.
+    :param top_index_matrix: Same but for top of layer.
+    :param pressure_weighted: Boolean flag.  If True (False), will compute
+        pressure-weighted (straight-up) mean.
+    :param pressure_matrix_pascals: [used only if pressure_weighted == True]
+        V-by-M-by-N numpy array of pressures.
+    :return: mean_zonal_wind_matrix_m_s01: M-by-N numpy array of mean zonal wind
+        speeds.
+    :return: mean_meridional_wind_matrix_m_s01: M-by-N numpy array of mean
+        meridional wind speeds.
+    """
+
+    # TODO(thunderhoser): I still need to mask out anything below the surface!
+
+    # TODO(thunderhoser): This method computes the mean wind between two
+    # vertical levels that exist in the model.  It cannot compute mean wind over
+    # arbitrary layers, e.g., 900.7 to 850.5 hPa.  This would involve
+    # interpolation, which is computationally expensive!
+
+    num_vertical_levels = zonal_wind_matrix_m_s01.shape[0]
+    vertical_indices = numpy.linspace(
+        0, num_vertical_levels - 1, num=num_vertical_levels, dtype=int
+    )
+    vertical_index_matrix = numpy.expand_dims(vertical_indices, axis=-1)
+    vertical_index_matrix = numpy.expand_dims(vertical_index_matrix, axis=-1)
+
+    bottom_index_matrix_3d = numpy.expand_dims(bottom_index_matrix, axis=0)
+    top_index_matrix_3d = numpy.expand_dims(top_index_matrix, axis=0)
+
+    # I like this code -- probably nothing to change here.
+    if not pressure_weighted:
+        masked_zonal_wind_matrix_m_s01 = zonal_wind_matrix_m_s01 + 0.
+        masked_zonal_wind_matrix_m_s01[
+            vertical_index_matrix < bottom_index_matrix_3d
+        ] = numpy.nan
+        masked_zonal_wind_matrix_m_s01[
+            vertical_index_matrix > top_index_matrix_3d
+        ] = numpy.nan
+
+        masked_meridional_wind_matrix_m_s01 = meridional_wind_matrix_m_s01 + 0.
+        masked_meridional_wind_matrix_m_s01[
+            vertical_index_matrix < bottom_index_matrix_3d
+        ] = numpy.nan
+        masked_meridional_wind_matrix_m_s01[
+            vertical_index_matrix > top_index_matrix_3d
+        ] = numpy.nan
+
+        return (
+            numpy.nanmean(masked_zonal_wind_matrix_m_s01, axis=0),
+            numpy.nanmean(masked_meridional_wind_matrix_m_s01, axis=0)
+        )
+
+    masked_pressure_matrix_pascals = pressure_matrix_pascals + 0.
+    masked_pressure_matrix_pascals[vertical_index_matrix < bottom_index_matrix_3d] = 0.
+    masked_pressure_matrix_pascals[vertical_index_matrix > top_index_matrix_3d] = 0.
+
+    # TODO(thunderhoser): What if all the weights are zero?  Masked array!
+    mean_zonal_wind_matrix_m_s01 = numpy.average(
+        zonal_wind_matrix_m_s01, weights=masked_pressure_matrix_pascals, axis=0
+    )
+    mean_meridional_wind_matrix_m_s01 = numpy.average(
+        meridional_wind_matrix_m_s01, weights=masked_pressure_matrix_pascals,
+        axis=0
+    )
+
+    return mean_zonal_wind_matrix_m_s01, mean_meridional_wind_matrix_m_s01
+
+
+def __get_mean_wind_lots_of_dims(
+        zonal_wind_matrix_m_s01, meridional_wind_matrix_m_s01,
+        bottom_index_matrix, top_index_matrix, pressure_weighted,
+        pressure_matrix_pascals=None):
+    """At every horizontal grid point, computes mean wind between two levels.
+
+    M = number of rows (latitudes) in grid
+    N = number of columns (longitudes) in grid
+    V = number of vertical levels in grid
+
+    :param zonal_wind_matrix_m_s01: V-by-M-by-N numpy array of zonal wind speeds
+        (metres per second).
+    :param meridional_wind_matrix_m_s01: V-by-M-by-N numpy array of meridional
+        wind speeds (metres per second).
+    :param bottom_index_matrix: M-by-N numpy array of non-negative integers,
+        indexing the bottom of the layer at each horizontal grid point.
+    :param top_index_matrix: Same but for top of layer.
+    :param pressure_weighted: Boolean flag.  If True (False), will compute
+        pressure-weighted (straight-up) mean.
+    :param pressure_matrix_pascals: [used only if pressure_weighted == True]
+        V-by-M-by-N numpy array of pressures.
+    :return: mean_zonal_wind_matrix_m_s01: M-by-N numpy array of mean zonal wind
+        speeds.
+    :return: mean_meridional_wind_matrix_m_s01: M-by-N numpy array of mean
+        meridional wind speeds.
+    """
+
+    # TODO(thunderhoser): I still need to mask out anything below the surface!
+
+    # TODO(thunderhoser): This method computes the mean wind between two
+    # vertical levels that exist in the model.  It cannot compute mean wind over
+    # arbitrary layers, e.g., 900.7 to 850.5 hPa.  This would involve
+    # interpolation, which is computationally expensive!
+
+    num_levels = zonal_wind_matrix_m_s01.shape[0]
+    num_grid_rows = zonal_wind_matrix_m_s01.shape[1]
+    num_grid_columns = zonal_wind_matrix_m_s01.shape[2]
+
+    vertical_index_matrix, _, _ = numpy.meshgrid(
+        numpy.linspace(0, num_levels - 1, num=num_levels, dtype=int),
+        numpy.linspace(0, num_grid_rows - 1, num=num_grid_rows, dtype=int),
+        numpy.linspace(0, num_grid_columns - 1, num=num_grid_columns, dtype=int)
+    )
+    vertical_index_matrix = numpy.swapaxes(vertical_index_matrix, 0, 1)
+
+    bottom_index_matrix_3d = numpy.expand_dims(bottom_index_matrix, axis=0)
+    top_index_matrix_3d = numpy.expand_dims(top_index_matrix, axis=0)
+
+    if not pressure_weighted:
+        masked_zonal_wind_matrix_m_s01 = zonal_wind_matrix_m_s01 + 0.
+        masked_zonal_wind_matrix_m_s01[
+            vertical_index_matrix < bottom_index_matrix_3d
+        ] = numpy.nan
+        masked_zonal_wind_matrix_m_s01[
+            vertical_index_matrix > top_index_matrix_3d
+        ] = numpy.nan
+
+        masked_meridional_wind_matrix_m_s01 = meridional_wind_matrix_m_s01 + 0.
+        masked_meridional_wind_matrix_m_s01[
+            vertical_index_matrix < bottom_index_matrix_3d
+        ] = numpy.nan
+        masked_meridional_wind_matrix_m_s01[
+            vertical_index_matrix > top_index_matrix_3d
+        ] = numpy.nan
+
+        return (
+            numpy.nanmean(masked_zonal_wind_matrix_m_s01, axis=0),
+            numpy.nanmean(masked_meridional_wind_matrix_m_s01, axis=0)
+        )
+
+    masked_pressure_matrix_pascals = pressure_matrix_pascals + 0.
+    masked_pressure_matrix_pascals[
+        vertical_index_matrix < bottom_index_matrix_3d
+    ] = 0.
+    masked_pressure_matrix_pascals[
+        vertical_index_matrix > top_index_matrix_3d
+    ] = 0.
+
+    # TODO(thunderhoser): What if all the weights are zero?  Masked array!
+    mean_zonal_wind_matrix_m_s01 = numpy.average(
+        zonal_wind_matrix_m_s01, weights=masked_pressure_matrix_pascals, axis=0
+    )
+    mean_meridional_wind_matrix_m_s01 = numpy.average(
+        meridional_wind_matrix_m_s01, weights=masked_pressure_matrix_pascals,
+        axis=0
+    )
+
+    return mean_zonal_wind_matrix_m_s01, mean_meridional_wind_matrix_m_s01
 
 
 def __interp_pressure_to_surface(
@@ -585,6 +813,53 @@ def _estimate_surface_pressure(
     return surface_pressure_matrix_pascals
 
 
+def create_field_name(metadata_dict):
+    """Creates name for derived field.
+
+    :param metadata_dict: See output documentation for `parse_field_name`.
+    :return: derived_field_name: String.
+    """
+
+    basic_field_name = metadata_dict[BASIC_FIELD_KEY]
+    derived_field_name = basic_field_name.replace('_', '-')
+
+    if (
+            basic_field_name in CAPE_CIN_NAMES
+            and basic_field_name not in
+            [MIXED_LAYER_CAPE_NAME, MIXED_LAYER_CIN_NAME]
+    ):
+        return derived_field_name
+
+    if basic_field_name in [MIXED_LAYER_CAPE_NAME, MIXED_LAYER_CIN_NAME]:
+        derived_field_name += '_ml-depth-metres={0:.4f}'.format(
+            metadata_dict[MIXED_LAYER_DEPTH_KEY]
+        )
+        return derived_field_name
+
+    if basic_field_name in (
+            [LIFTED_INDEX_NAME, PRECIPITABLE_WATER_NAME] + WIND_SHEAR_NAMES
+    ):
+        derived_field_name += '_top-pressure-pascals={0:d}'.format(
+            int(numpy.round(metadata_dict[TOP_PRESSURE_KEY]))
+        )
+
+        if basic_field_name not in WIND_SHEAR_NAMES:
+            return derived_field_name
+
+    # If execution makes it to this point,
+    # `basic_field_name in WIND_SHEAR_NAMES`.
+    if metadata_dict[BOTTOM_PRESSURE_KEY] == 'surface':
+        derived_field_name += '_bottom-pressure-pascals={0:s}'.format(
+            metadata_dict[BOTTOM_PRESSURE_KEY]
+        )
+    else:
+        derived_field_name += '_bottom-pressure-pascals={0:d}'.format(
+            int(numpy.round(metadata_dict[BOTTOM_PRESSURE_KEY]))
+        )
+
+    return derived_field_name
+
+
 def parse_field_name(derived_field_name, is_field_to_compute):
     """Parses name of derived field.
 
@@ -594,6 +869,9 @@ def parse_field_name(derived_field_name, is_field_to_compute):
         already computed.
     :return: metadata_dict: Dictionary with the following keys.
     metadata_dict["basic_field_name"]: Name of basic field, without any options.
+    metadata_dict["parcel_source_string"]: Parcel source (surface, mixed-layer,
+        or most unstable).  This variable is only for CAPE and CIN; for other
+        fields, it is None.
     metadata_dict["mixed_layer_depth_metres"]: Mixed-layer depth (only for
         mixed-layer CAPE or CIN; otherwise, None).
     metadata_dict["top_pressure_pascals"]: Top pressure level (only for certain
@@ -602,88 +880,89 @@ def parse_field_name(derived_field_name, is_field_to_compute):
         certain fields; otherwise, None).
     """
 
-    # TODO(thunderhoser): Dict keys should be constants.
-    # TODO(thunderhoser): Needs unit test.
-
     error_checking.assert_is_string(derived_field_name)
     error_checking.assert_is_boolean(is_field_to_compute)
 
-    valid_field_names = (
+    valid_basic_field_names = (
         BASIC_FIELD_NAMES_NO_VEC_ELEMENTS if is_field_to_compute
         else BASIC_FIELD_NAMES_WITH_VEC_ELEMENTS
     )
 
-    basic_field_name = None
-    for f in valid_field_names:
-        if derived_field_name.startswith(f):
-            basic_field_name = f
-            break
-
-    if basic_field_name is None:
+    basic_field_name = derived_field_name.split('_')[0].replace('-', '_')
+    if basic_field_name not in valid_basic_field_names:
         error_string = (
             'Cannot find basic field name in string "{0:s}".  The string '
             'should start with one of the following:\n{1:s}'
         ).format(
             derived_field_name,
-            str(valid_field_names)
+            str(valid_basic_field_names)
         )
 
         raise ValueError(error_string)
 
     metadata_dict = {
-        'basic_field_name': basic_field_name,
-        'mixed_layer_depth_metres': None,
-        'top_pressure_pascals': None,
-        'bottom_pressure_pascals': None
+        BASIC_FIELD_KEY: basic_field_name,
+        PARCEL_SOURCE_KEY: None,
+        MIXED_LAYER_DEPTH_KEY: None,
+        TOP_PRESSURE_KEY: None,
+        BOTTOM_PRESSURE_KEY: None
     }
 
+    if basic_field_name in [MOST_UNSTABLE_CAPE_NAME, MOST_UNSTABLE_CIN_NAME]:
+        metadata_dict[PARCEL_SOURCE_KEY] = MOST_UNSTABLE_PARCEL_SOURCE_STRING
     if basic_field_name in [MIXED_LAYER_CAPE_NAME, MIXED_LAYER_CIN_NAME]:
-        end_of_field_name = derived_field_name.replace(
-            basic_field_name + '_', '', 1
-        )
-        assert '_' not in end_of_field_name
-        assert end_of_field_name.startswith('ml-depth-metres=')
+        metadata_dict[PARCEL_SOURCE_KEY] = MIXED_LAYER_PARCEL_SOURCE_STRING
+    if basic_field_name in [SURFACE_BASED_CAPE_NAME, SURFACE_BASED_CIN_NAME]:
+        metadata_dict[PARCEL_SOURCE_KEY] = SURFACE_PARCEL_SOURCE_STRING
 
-        end_of_field_name = end_of_field_name.replace('ml-depth-metres=', '', 1)
-        metadata_dict['mixed_layer_depth_metres'] = float(end_of_field_name)
-        assert metadata_dict['mixed_layer_depth_metres'] > 0.
-
+    if (
+            basic_field_name in CAPE_CIN_NAMES
+            and basic_field_name not in
+            [MIXED_LAYER_CAPE_NAME, MIXED_LAYER_CIN_NAME]
+    ):
         return metadata_dict
 
-    end_of_field_name = None
+    if basic_field_name in [MIXED_LAYER_CAPE_NAME, MIXED_LAYER_CIN_NAME]:
+        this_word = derived_field_name.split('_')[1]
+        assert this_word.startswith('ml-depth-metres=')
 
-    if basic_field_name in [
-            LIFTED_INDEX_NAME, PRECIPITABLE_WATER_NAME, WIND_SHEAR_NAME,
-            ZONAL_WIND_SHEAR_NAME, MERIDIONAL_WIND_SHEAR_NAME
-    ]:
-        end_of_field_name = derived_field_name.replace(
-            basic_field_name + '_', '', 1
+        mixed_layer_depth_metres = float(
+            this_word.replace('ml-depth-metres=', '', 1)
         )
-        assert end_of_field_name.startswith('top-pressure-pascals=')
+        assert mixed_layer_depth_metres > 0.
 
-        end_of_field_name = end_of_field_name.replace(
-            'top-pressure-pascals=', '', 1
-        )
-        metadata_dict['top_pressure_pascals'] = int(
-            end_of_field_name.split('_')[0]
-        )
-        assert metadata_dict['top_pressure_pascals'] > 0
-
-    if basic_field_name not in [
-            WIND_SHEAR_NAME, ZONAL_WIND_SHEAR_NAME, MERIDIONAL_WIND_SHEAR_NAME
-    ]:
+        metadata_dict[MIXED_LAYER_DEPTH_KEY] = mixed_layer_depth_metres
         return metadata_dict
 
-    end_of_field_name = end_of_field_name.split('_')[1]
-    assert '_' not in end_of_field_name
-    assert end_of_field_name.startswith('bottom-pressure-pascals=')
+    if basic_field_name in (
+            [LIFTED_INDEX_NAME, PRECIPITABLE_WATER_NAME] + WIND_SHEAR_NAMES
+    ):
+        this_word = derived_field_name.split('_')[1]
+        assert this_word.startswith('top-pressure-pascals=')
 
-    end_of_field_name = end_of_field_name.replace(
-        'bottom-pressure-pascals=', '', 1
-    )
-    metadata_dict['bottom_pressure_pascals'] = int(end_of_field_name)
-    assert metadata_dict['bottom_pressure_pascals'] > 0
+        top_pressure_pascals = int(
+            this_word.replace('top-pressure-pascals=', '', 1)
+        )
+        assert top_pressure_pascals > 0
 
+        metadata_dict[TOP_PRESSURE_KEY] = top_pressure_pascals
+
+        if basic_field_name not in WIND_SHEAR_NAMES:
+            return metadata_dict
+
+    # If execution makes it to this point,
+    # `basic_field_name in WIND_SHEAR_NAMES`.
+    this_word = derived_field_name.split('_')[2]
+    assert this_word.startswith('bottom-pressure-pascals=')
+
+    this_word = this_word.replace('bottom-pressure-pascals=', '', 1)
+    if this_word == 'surface':
+        bottom_pressure_pascals = this_word
+    else:
+        bottom_pressure_pascals = int(this_word)
+        assert bottom_pressure_pascals > metadata_dict[TOP_PRESSURE_KEY]
+
+    metadata_dict[BOTTOM_PRESSURE_KEY] = bottom_pressure_pascals
     return metadata_dict
 
 
@@ -702,8 +981,8 @@ def get_cape_and_cin(
         `model_io.read_file`.
     :param do_multiprocessing: Boolean flag.  If True, will parallelize the
         calculation into many processes.  If False, will do it all sequentially.
-    :param parcel_source_string: Parcel source.  Valid options are "surface",
-        "mixed-layer", and "most-unstable".
+    :param parcel_source_string: Parcel source.  This string must belong to the
+        list `PARCEL_SOURCE_STRINGS`.
     :param mixed_layer_depth_metres: Mixed-layer depth.  If
         `parcel_source_string` is not the mixed layer, just leave this argument
         alone.
@@ -746,10 +1025,19 @@ def get_cape_and_cin(
         )
 
     error_checking.assert_is_boolean(do_multiprocessing)
-
     error_checking.assert_is_string(parcel_source_string)
-    assert parcel_source_string in ['surface', 'mixed-layer', 'most-unstable']
-    if parcel_source_string != 'mixed-layer':
+
+    if parcel_source_string not in PARCEL_SOURCE_STRINGS:
+        error_string = (
+            'Parcel source ("{0:s}") should be one of the following:\n{1:s}'
+        ).format(
+            parcel_source_string,
+            str(PARCEL_SOURCE_STRINGS)
+        )
+
+        raise ValueError(error_string)
+
+    if parcel_source_string != MIXED_LAYER_PARCEL_SOURCE_STRING:
         mixed_layer_depth_metres = None
 
     if mixed_layer_depth_metres is not None:
@@ -859,7 +1147,7 @@ def get_cape_and_cin(
         )
 
         with Pool() as pool_object:
-            if parcel_source_string == 'most-unstable':
+            if parcel_source_string == MOST_UNSTABLE_PARCEL_SOURCE_STRING:
                 cape_submatrices, cin_submatrices, _, _ = zip(
                     *__starmap_with_kwargs(
                         pool_object, core.calc_cape,
@@ -1296,6 +1584,11 @@ def get_wind_shear(
             aux_data_matrix=surface_pressure_matrix_pascals
         )
 
+    top_index = _pressure_level_to_index(
+        forecast_table_xarray=forecast_table_xarray,
+        desired_pressure_pascals=top_pressure_pascals
+    )
+
     is_bottom_surface = False
 
     if isinstance(bottom_pressure_pascals, str):
@@ -1307,11 +1600,7 @@ def get_wind_shear(
             forecast_table_xarray=forecast_table_xarray,
             desired_pressure_pascals=bottom_pressure_pascals
         )
-
-    top_index = _pressure_level_to_index(
-        forecast_table_xarray=forecast_table_xarray,
-        desired_pressure_pascals=top_pressure_pascals
-    )
+        assert top_index > bottom_index
 
     # Estimate surface pressure, if necessary.
     if surface_pressure_matrix_pascals is None and is_bottom_surface:

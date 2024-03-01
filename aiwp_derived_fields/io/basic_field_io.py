@@ -43,11 +43,12 @@ def find_file(directory_name, model_name, init_time_unix_sec,
     # Check input args.
     error_checking.assert_is_string(directory_name)
     model_utils.check_model_name(model_name)
-    error_checking.assert_is_integer(init_time_unix_sec)
-    init_time_unix_sec = number_rounding.round_to_nearest(
-        init_time_unix_sec, INIT_TIME_INTERVAL_SEC
-    )
     error_checking.assert_is_boolean(raise_error_if_missing)
+
+    error_checking.assert_is_integer(init_time_unix_sec)
+    init_time_unix_sec = int(number_rounding.round_to_nearest(
+        init_time_unix_sec, INIT_TIME_INTERVAL_SEC
+    ))
 
     # Determine where the file should be.
     init_time_string = time_conversion.unix_sec_to_string(
