@@ -14,6 +14,7 @@ from aiwp_derived_fields.utils import model_utils
 from aiwp_derived_fields.outside_code import sharppy_thermo
 
 NUM_SLICES_FOR_MULTIPROCESSING = 8
+HEIGHT_SPACING_FOR_HELICITY_METRES = 250.
 
 HPA_TO_PASCALS = 100.
 PASCALS_TO_HPA = 0.01
@@ -66,6 +67,24 @@ PARCEL_SOURCE_STRINGS = [
 ]
 
 
+def __starmap_with_kwargs(pool_object, function_object, args_iter, kwargs_iter):
+    """Allows `multiprocessing.Pool.starmap` to work with keyword args.
+
+    :param pool_object: Instance of `multiprocessing.Pool`.
+    :param function_object: Function handle.
+    :param args_iter: Non-keyword arguments to function.
+    :param kwargs_iter: Keyword arguments to function.
+    :return: starmap_object: Instance of `multiprocessing.Pool.starmap`.
+    """
+
+    args_for_starmap = zip(repeat(function_object), args_iter, kwargs_iter)
+    return pool_object.starmap(__apply_args_and_kwargs, args_for_starmap)
+
+
+def __apply_args_and_kwargs(function_object, args, kwargs):
+    return function_object(*args, **kwargs)
+
+
 def __check_for_matching_grids(forecast_table_xarray, aux_data_matrix):
     """Checks for matching grids between xarray table and numpy matrix.
 
@@ -92,24 +111,6 @@ def __check_for_matching_grids(forecast_table_xarray, aux_data_matrix):
     error_checking.assert_is_numpy_array(
         aux_data_matrix, exact_dimensions=expected_dim
     )
-
-
-def __starmap_with_kwargs(pool_object, function_object, args_iter, kwargs_iter):
-    """Allows `multiprocessing.Pool.starmap` to work with keyword args.
-
-    :param pool_object: Instance of `multiprocessing.Pool`.
-    :param function_object: Function handle.
-    :param args_iter: Non-keyword arguments to function.
-    :param kwargs_iter: Keyword arguments to function.
-    :return: starmap_object: Instance of `multiprocessing.Pool.starmap`.
-    """
-
-    args_for_starmap = zip(repeat(function_object), args_iter, kwargs_iter)
-    return pool_object.starmap(__apply_args_and_kwargs, args_for_starmap)
-
-
-def __apply_args_and_kwargs(function_object, args, kwargs):
-    return function_object(*args, **kwargs)
 
 
 def __get_slices_for_multiprocessing(num_grid_rows):
@@ -189,7 +190,7 @@ def __get_model_pressure_matrix(forecast_table_xarray, vertical_axis_first):
 
 def __height_agl_to_nearest_pressure_level(
         geopotential_matrix_m2_s02, surface_geopotential_matrix_m2_s02,
-        desired_height_m_agl):
+        desired_height_m_agl, find_nearest_level_beneath):
     """At every horizontal grid point, finds nearest p-level to a given height.
 
     This is a ground-relative height, specifically.
@@ -202,20 +203,36 @@ def __height_agl_to_nearest_pressure_level(
     :param surface_geopotential_matrix_m2_s02: M-by-N numpy array of surface
         geopotentials.
     :param desired_height_m_agl: Desired height (metres above ground level).
+    :param find_nearest_level_beneath: Boolean flag.  If True, will find nearest
+        pressure level beneath the desired height (i.e., closer to the surface).
+        If False, will just find the nearest pressure level.
     :return: vertical_index_matrix: M-by-N numpy array of indices.  These are
         non-negative array indices into the first axis of
         `geopotential_matrix_m2_s02`, indicating the vertical level nearest to
         the desired ground-relative height.
     """
 
-    # TODO(thunderhoser): Deal with subsurface levels somewhere -- but not here.
-
     numerator = GRAVITY_M_S02 * EARTH_RADIUS_METRES * desired_height_m_agl
-    denominator = EARTH_RADIUS_METRES - desired_height_m_agl
+    denominator = EARTH_RADIUS_METRES + desired_height_m_agl
     desired_sfc_relative_geoptl_m2_s02 = numerator / denominator
     desired_geopotential_matrix_m2_s02 = (
         surface_geopotential_matrix_m2_s02 + desired_sfc_relative_geoptl_m2_s02
     )
+
+    if not find_nearest_level_beneath:
+        return numpy.argmin(
+            numpy.absolute(
+                geopotential_matrix_m2_s02 -
+                numpy.expand_dims(desired_geopotential_matrix_m2_s02, axis=0)
+            ),
+            axis=0
+        )
+
+    new_geopotential_matrix_m2_s02 = geopotential_matrix_m2_s02 + 0.
+    new_geopotential_matrix_m2_s02[
+        new_geopotential_matrix_m2_s02 >
+        numpy.expand_dims(desired_geopotential_matrix_m2_s02, axis=0)
+    ] = 1e12
 
     return numpy.argmin(
         numpy.absolute(
@@ -229,7 +246,7 @@ def __height_agl_to_nearest_pressure_level(
 def __get_mean_wind(
         zonal_wind_matrix_m_s01, meridional_wind_matrix_m_s01,
         bottom_index_matrix, top_index_matrix, pressure_weighted,
-        pressure_matrix_pascals=None):
+        pressure_matrix_pascals, surface_pressure_matrix_pascals):
     """At every horizontal grid point, computes mean wind between two levels.
 
     M = number of rows (latitudes) in grid
@@ -245,21 +262,22 @@ def __get_mean_wind(
     :param top_index_matrix: Same but for top of layer.
     :param pressure_weighted: Boolean flag.  If True (False), will compute
         pressure-weighted (straight-up) mean.
-    :param pressure_matrix_pascals: [used only if pressure_weighted == True]
-        V-by-M-by-N numpy array of pressures.
+    :param pressure_matrix_pascals: V-by-M-by-N numpy array of pressures.
+    :param surface_pressure_matrix_pascals: M-by-N numpy array of surface
+        pressures.
     :return: mean_zonal_wind_matrix_m_s01: M-by-N numpy array of mean zonal wind
         speeds.
     :return: mean_meridional_wind_matrix_m_s01: M-by-N numpy array of mean
         meridional wind speeds.
     """
 
-    # TODO(thunderhoser): I still need to mask out anything below the surface!
-
     # TODO(thunderhoser): This method computes the mean wind between two
     # vertical levels that exist in the model.  It cannot compute mean wind over
     # arbitrary layers, e.g., 900.7 to 850.5 hPa.  This would involve
     # interpolation, which is computationally expensive!
 
+    # At each horizontal grid point, mask out levels that aren't in the desired
+    # layer (between bottom_index and top_index).
     num_vertical_levels = zonal_wind_matrix_m_s01.shape[0]
     vertical_indices = numpy.linspace(
         0, num_vertical_levels - 1, num=num_vertical_levels, dtype=int
@@ -270,133 +288,207 @@ def __get_mean_wind(
     bottom_index_matrix_3d = numpy.expand_dims(bottom_index_matrix, axis=0)
     top_index_matrix_3d = numpy.expand_dims(top_index_matrix, axis=0)
 
-    # I like this code -- probably nothing to change here.
-    if not pressure_weighted:
-        masked_zonal_wind_matrix_m_s01 = zonal_wind_matrix_m_s01 + 0.
-        masked_zonal_wind_matrix_m_s01[
-            vertical_index_matrix < bottom_index_matrix_3d
-        ] = numpy.nan
-        masked_zonal_wind_matrix_m_s01[
-            vertical_index_matrix > top_index_matrix_3d
-        ] = numpy.nan
+    mask_out_matrix = numpy.logical_or(
+        vertical_index_matrix < bottom_index_matrix_3d,
+        vertical_index_matrix > top_index_matrix_3d
+    )
 
-        masked_meridional_wind_matrix_m_s01 = meridional_wind_matrix_m_s01 + 0.
-        masked_meridional_wind_matrix_m_s01[
-            vertical_index_matrix < bottom_index_matrix_3d
-        ] = numpy.nan
-        masked_meridional_wind_matrix_m_s01[
-            vertical_index_matrix > top_index_matrix_3d
-        ] = numpy.nan
+    # At each horizontal grid point, also mask out levels below the surface.
+    mask_out_matrix = numpy.logical_or(
+        mask_out_matrix,
+        pressure_matrix_pascals - 0.1 >
+        numpy.expand_dims(surface_pressure_matrix_pascals, axis=0)
+    )
 
-        return (
-            numpy.nanmean(masked_zonal_wind_matrix_m_s01, axis=0),
-            numpy.nanmean(masked_meridional_wind_matrix_m_s01, axis=0)
+    # At each horizontal grid point, compute the mean wind using only the
+    # unmasked vertical levels.
+    if pressure_weighted:
+        masked_pressure_matrix_pascals = numpy.ma.array(
+            data=pressure_matrix_pascals, mask=mask_out_matrix
         )
 
-    masked_pressure_matrix_pascals = pressure_matrix_pascals + 0.
-    masked_pressure_matrix_pascals[vertical_index_matrix < bottom_index_matrix_3d] = 0.
-    masked_pressure_matrix_pascals[vertical_index_matrix > top_index_matrix_3d] = 0.
+        mean_zonal_wind_matrix_m_s01 = numpy.ma.average(
+            zonal_wind_matrix_m_s01,
+            weights=masked_pressure_matrix_pascals, axis=0
+        )
+        mean_meridional_wind_matrix_m_s01 = numpy.ma.average(
+            meridional_wind_matrix_m_s01,
+            weights=masked_pressure_matrix_pascals, axis=0
+        )
+    else:
+        masked_zonal_wind_matrix_m_s01 = numpy.ma.array(
+            data=zonal_wind_matrix_m_s01, mask=mask_out_matrix
+        )
+        masked_meridional_wind_matrix_m_s01 = numpy.ma.array(
+            data=meridional_wind_matrix_m_s01, mask=mask_out_matrix
+        )
 
-    # TODO(thunderhoser): What if all the weights are zero?  Masked array!
-    mean_zonal_wind_matrix_m_s01 = numpy.average(
-        zonal_wind_matrix_m_s01, weights=masked_pressure_matrix_pascals, axis=0
+        mean_zonal_wind_matrix_m_s01 = numpy.ma.mean(
+            masked_zonal_wind_matrix_m_s01, axis=0
+        )
+        mean_meridional_wind_matrix_m_s01 = numpy.ma.mean(
+            masked_meridional_wind_matrix_m_s01, axis=0
+        )
+
+    mean_zonal_wind_matrix_m_s01 = numpy.where(
+        numpy.ma.getmask(mean_zonal_wind_matrix_m_s01) == False,
+        numpy.ma.getdata(mean_zonal_wind_matrix_m_s01),
+        numpy.nan
     )
-    mean_meridional_wind_matrix_m_s01 = numpy.average(
-        meridional_wind_matrix_m_s01, weights=masked_pressure_matrix_pascals,
-        axis=0
+    mean_meridional_wind_matrix_m_s01 = numpy.where(
+        numpy.ma.getmask(mean_meridional_wind_matrix_m_s01) == False,
+        numpy.ma.getdata(mean_meridional_wind_matrix_m_s01),
+        numpy.nan
     )
 
     return mean_zonal_wind_matrix_m_s01, mean_meridional_wind_matrix_m_s01
 
 
-def __get_mean_wind_lots_of_dims(
-        zonal_wind_matrix_m_s01, meridional_wind_matrix_m_s01,
-        bottom_index_matrix, top_index_matrix, pressure_weighted,
-        pressure_matrix_pascals=None):
-    """At every horizontal grid point, computes mean wind between two levels.
+def __get_pbl_height(
+        theta_v_matrix_kelvins, geopotential_matrix_m2_s02,
+        theta_v_deviation_threshold_kelvins=0.5):
+    """At every horizontal grid point, computes PBL height.
+
+    PBL = planetary boundary layer
 
     M = number of rows (latitudes) in grid
     N = number of columns (longitudes) in grid
-    V = number of vertical levels in grid
+    V = number of pressure levels
+    V + 1 = total number of vertical levels, including surface
 
-    :param zonal_wind_matrix_m_s01: V-by-M-by-N numpy array of zonal wind speeds
-        (metres per second).
-    :param meridional_wind_matrix_m_s01: V-by-M-by-N numpy array of meridional
-        wind speeds (metres per second).
-    :param bottom_index_matrix: M-by-N numpy array of non-negative integers,
-        indexing the bottom of the layer at each horizontal grid point.
-    :param top_index_matrix: Same but for top of layer.
-    :param pressure_weighted: Boolean flag.  If True (False), will compute
-        pressure-weighted (straight-up) mean.
-    :param pressure_matrix_pascals: [used only if pressure_weighted == True]
-        V-by-M-by-N numpy array of pressures.
-    :return: mean_zonal_wind_matrix_m_s01: M-by-N numpy array of mean zonal wind
-        speeds.
-    :return: mean_meridional_wind_matrix_m_s01: M-by-N numpy array of mean
-        meridional wind speeds.
+    :param theta_v_matrix_kelvins: (V + 1)-by-M-by-N numpy array of virtual
+        potential temperatures.  theta_v_matrix_kelvins[0, ...] is the surface,
+        and theta_v_matrix_kelvins[1:, ...] is everywhere aloft.
+    :param geopotential_matrix_m2_s02: Same but with geopotential values
+        (m^2 s^-2).
+    :param theta_v_deviation_threshold_kelvins: Deviation threshold used to
+        define top of PBL.  Specifically, the PBL top is the lowest height where
+        theta_v >= theta_v_surface + `theta_v_deviation_threshold_kelvins`.
+    :return: pbl_height_matrix_m_agl: M-by-N numpy array of PBL heights (metres
+        above ground level).
     """
 
-    # TODO(thunderhoser): I still need to mask out anything below the surface!
+    error_checking.assert_is_greater(theta_v_deviation_threshold_kelvins, 0.)
 
-    # TODO(thunderhoser): This method computes the mean wind between two
-    # vertical levels that exist in the model.  It cannot compute mean wind over
-    # arbitrary layers, e.g., 900.7 to 850.5 hPa.  This would involve
-    # interpolation, which is computationally expensive!
-
-    num_levels = zonal_wind_matrix_m_s01.shape[0]
-    num_grid_rows = zonal_wind_matrix_m_s01.shape[1]
-    num_grid_columns = zonal_wind_matrix_m_s01.shape[2]
-
-    vertical_index_matrix, _, _ = numpy.meshgrid(
-        numpy.linspace(0, num_levels - 1, num=num_levels, dtype=int),
-        numpy.linspace(0, num_grid_rows - 1, num=num_grid_rows, dtype=int),
-        numpy.linspace(0, num_grid_columns - 1, num=num_grid_columns, dtype=int)
+    # At every horizontal grid point, find lowest height where theta_v exceeds
+    # critical value (surface theta_v + `theta_v_deviation_threshold_kelvins`).
+    theta_v_threshold_matrix_kelvins = (
+        theta_v_matrix_kelvins[0, ...] +
+        theta_v_deviation_threshold_kelvins
     )
-    vertical_index_matrix = numpy.swapaxes(vertical_index_matrix, 0, 1)
-
-    bottom_index_matrix_3d = numpy.expand_dims(bottom_index_matrix, axis=0)
-    top_index_matrix_3d = numpy.expand_dims(top_index_matrix, axis=0)
-
-    if not pressure_weighted:
-        masked_zonal_wind_matrix_m_s01 = zonal_wind_matrix_m_s01 + 0.
-        masked_zonal_wind_matrix_m_s01[
-            vertical_index_matrix < bottom_index_matrix_3d
-        ] = numpy.nan
-        masked_zonal_wind_matrix_m_s01[
-            vertical_index_matrix > top_index_matrix_3d
-        ] = numpy.nan
-
-        masked_meridional_wind_matrix_m_s01 = meridional_wind_matrix_m_s01 + 0.
-        masked_meridional_wind_matrix_m_s01[
-            vertical_index_matrix < bottom_index_matrix_3d
-        ] = numpy.nan
-        masked_meridional_wind_matrix_m_s01[
-            vertical_index_matrix > top_index_matrix_3d
-        ] = numpy.nan
-
-        return (
-            numpy.nanmean(masked_zonal_wind_matrix_m_s01, axis=0),
-            numpy.nanmean(masked_meridional_wind_matrix_m_s01, axis=0)
-        )
-
-    masked_pressure_matrix_pascals = pressure_matrix_pascals + 0.
-    masked_pressure_matrix_pascals[
-        vertical_index_matrix < bottom_index_matrix_3d
-    ] = 0.
-    masked_pressure_matrix_pascals[
-        vertical_index_matrix > top_index_matrix_3d
-    ] = 0.
-
-    # TODO(thunderhoser): What if all the weights are zero?  Masked array!
-    mean_zonal_wind_matrix_m_s01 = numpy.average(
-        zonal_wind_matrix_m_s01, weights=masked_pressure_matrix_pascals, axis=0
-    )
-    mean_meridional_wind_matrix_m_s01 = numpy.average(
-        meridional_wind_matrix_m_s01, weights=masked_pressure_matrix_pascals,
-        axis=0
+    exceedance_flag_matrix = (
+        theta_v_matrix_kelvins >=
+        numpy.expand_dims(theta_v_threshold_matrix_kelvins, axis=0)
     )
 
-    return mean_zonal_wind_matrix_m_s01, mean_meridional_wind_matrix_m_s01
+    # Mask out theta_v values below the surface.
+    mask_out_matrix = (
+        geopotential_matrix_m2_s02 <
+        geopotential_matrix_m2_s02[[0], ...] - 0.1
+    )
+    exceedance_flag_matrix = numpy.logical_and(
+        exceedance_flag_matrix,
+        numpy.invert(mask_out_matrix)
+    )
+    top_index_matrix = numpy.argmax(exceedance_flag_matrix, axis=0)
+
+    # At any horizontal grid point where theta_v does not exceed the threshold
+    # at any vertical level, this matrix will have a False value.
+    bad_flag_matrix = exceedance_flag_matrix[
+        top_index_matrix,
+        numpy.arange(top_index_matrix.shape[0])[:, None],
+        numpy.arange(top_index_matrix.shape[1])
+    ]
+
+    # Create 2-by-M-by-N matrix of theta_v values, where the two vertical levels
+    # sandwich the PBL top.
+    top_theta_v_matrix_kelvins = theta_v_matrix_kelvins[
+        top_index_matrix,
+        numpy.arange(top_index_matrix.shape[0])[:, None],
+        numpy.arange(top_index_matrix.shape[1])
+    ]
+    bottom_theta_v_matrix_kelvins = theta_v_matrix_kelvins[
+        top_index_matrix - 1,
+        numpy.arange(top_index_matrix.shape[0])[:, None],
+        numpy.arange(top_index_matrix.shape[1])
+    ]
+
+    # Also create 2-by-M-by-N matrix of geopotential values, where the two
+    # vertical levels sandwich the PBL top.
+    top_geopotential_matrix_m2_s02 = geopotential_matrix_m2_s02[
+        top_index_matrix,
+        numpy.arange(top_index_matrix.shape[0])[:, None],
+        numpy.arange(top_index_matrix.shape[1])
+    ]
+    bottom_geopotential_matrix_m2_s02 = geopotential_matrix_m2_s02[
+        top_index_matrix - 1,
+        numpy.arange(top_index_matrix.shape[0])[:, None],
+        numpy.arange(top_index_matrix.shape[1])
+    ]
+
+    # Now apply the linear-interpolation formula to find, at every horizontal
+    # grid point, the geopotential where theta_v crosses the critical value.
+    y0_term = bottom_geopotential_matrix_m2_s02
+    x_minus_x0_term = (
+        theta_v_threshold_matrix_kelvins - bottom_theta_v_matrix_kelvins
+    )
+    y1_minus_y0_term = (
+        top_geopotential_matrix_m2_s02 - bottom_geopotential_matrix_m2_s02
+    )
+    x1_minus_x0_term = (
+        top_theta_v_matrix_kelvins - bottom_theta_v_matrix_kelvins
+    )
+    pbl_top_geopotential_matrix_m2_s02 = (
+        y0_term + x_minus_x0_term * y1_minus_y0_term / x1_minus_x0_term
+    )
+
+    pbl_top_geopotential_matrix_m2_s02[bad_flag_matrix] = numpy.nan
+
+    # At every horizontal grid point where the bottom of the sandwich is
+    # sub-surface, do the interpolation again, using the surface itself as the
+    # bottom of the sandwich.
+    bad_flag_matrix = (
+        bottom_geopotential_matrix_m2_s02 <
+        geopotential_matrix_m2_s02[0, ...] - 0.1
+    )
+
+    bottom_geopotential_matrix_m2_s02 = geopotential_matrix_m2_s02[0, ...]
+    bottom_theta_v_matrix_kelvins = theta_v_matrix_kelvins[0, ...]
+
+    y0_term = bottom_geopotential_matrix_m2_s02
+    x_minus_x0_term = (
+        theta_v_threshold_matrix_kelvins - bottom_theta_v_matrix_kelvins
+    )
+    y1_minus_y0_term = (
+        top_geopotential_matrix_m2_s02 - bottom_geopotential_matrix_m2_s02
+    )
+    x1_minus_x0_term = (
+        top_theta_v_matrix_kelvins - bottom_theta_v_matrix_kelvins
+    )
+    second_pbl_top_geopotential_matrix_m2_s02 = (
+        y0_term + x_minus_x0_term * y1_minus_y0_term / x1_minus_x0_term
+    )
+
+    pbl_top_geopotential_matrix_m2_s02[bad_flag_matrix] = (
+        second_pbl_top_geopotential_matrix_m2_s02[bad_flag_matrix]
+    )
+
+    # Convert PBL geopotential to height above ground.
+    pbl_top_sfc_relative_geoptl_matrix_m2_s02 = (
+        pbl_top_geopotential_matrix_m2_s02 - geopotential_matrix_m2_s02[0, ...]
+    )
+    
+    numerator = EARTH_RADIUS_METRES * pbl_top_sfc_relative_geoptl_matrix_m2_s02
+    denominator = (
+        GRAVITY_M_S02 * EARTH_RADIUS_METRES -
+        pbl_top_sfc_relative_geoptl_matrix_m2_s02
+    )
+    pbl_height_matrix_m_agl = numerator / denominator
+
+    # Because of the "minus 0.1" in my comparisons with the surface, sometimes
+    # the PBL height is slightly negative.
+    pbl_height_matrix_m_agl = numpy.maximum(pbl_height_matrix_m_agl, 0.)
+    return pbl_height_matrix_m_agl
 
 
 def __interp_pressure_to_surface(
@@ -434,14 +526,6 @@ def __interp_pressure_to_surface(
         geoptl_sort_index_matrix = None
 
     for i in range(num_grid_rows):
-        # if numpy.mod(i, 10) == 0:
-        #     print((
-        #         'Have estimated surface pressure for {0:d} of {1:d} rows in '
-        #         'grid...'
-        #     ).format(
-        #         i, num_grid_rows
-        #     ))
-
         for j in range(num_grid_columns):
             if use_spline:
                 inds = geoptl_sort_index_matrix[:, i, j]
@@ -466,11 +550,83 @@ def __interp_pressure_to_surface(
                 surface_geopotential_matrix_m2_s02[i, j]
             )
 
-    # print('Have estimated surface pressure for all {0:d} grid points!'.format(
-    #     num_grid_rows * num_grid_columns
-    # ))
-
     return 10 ** log10_surface_pressure_matrix_pascals
+
+
+def __interp_wind_to_heights_agl(
+        wind_matrix_m_s01, geopotential_matrix_m2_s02,
+        surface_geopotential_matrix_m2_s02, target_heights_m_agl, use_spline):
+    """At every horizontal grid pt, interpolates wind to ground-relative hgts.
+
+    M = number of rows (latitudes) in grid
+    N = number of columns (longitudes) in grid
+    V = number of vertical levels in grid
+    T = number of target heights
+
+    :param wind_matrix_m_s01: V-by-M-by-N numpy array of wind speeds (metres per
+        second).  These could be scalar wind speeds, representing the magnitude
+        of the wind vector, or single-component wind speeds, representing either
+        the zonal or meridional part.
+    :param geopotential_matrix_m2_s02: V-by-M-by-N numpy array of geopotentials
+        (m^2 s^-2).
+    :param surface_geopotential_matrix_m2_s02: M-by-N numpy array of surface
+        geopotentials.
+    :param target_heights_m_agl: length-T numpy array of target heights (metres
+        above ground level).  Will interpolate to these heights.
+    :param use_spline: Boolean flag.
+    :return: interp_wind_matrix_m_s01: M-by-N numpy array of interpolated wind
+        speeds.
+    """
+
+    numerator = GRAVITY_M_S02 * EARTH_RADIUS_METRES * target_heights_m_agl
+    denominator = EARTH_RADIUS_METRES + target_heights_m_agl
+    target_sfc_relative_geoptls_m2_s02 = numerator / denominator
+
+    target_geopotential_matrix_m2_s02 = numpy.stack([
+        surface_geopotential_matrix_m2_s02 + g
+        for g in target_sfc_relative_geoptls_m2_s02
+    ], axis=0)
+
+    num_grid_rows = surface_geopotential_matrix_m2_s02.shape[0]
+    num_grid_columns = surface_geopotential_matrix_m2_s02.shape[1]
+    num_target_heights = len(target_heights_m_agl)
+    interp_wind_matrix_m_s01 = numpy.full(
+        (num_target_heights, num_grid_rows, num_grid_columns), numpy.nan
+    )
+
+    if use_spline:
+        geoptl_sort_index_matrix = numpy.argsort(
+            geopotential_matrix_m2_s02, axis=0
+        )
+    else:
+        geoptl_sort_index_matrix = None
+
+    for i in range(num_grid_rows):
+        for j in range(num_grid_columns):
+            if use_spline:
+                inds = geoptl_sort_index_matrix[:, i, j]
+
+                interp_object = InterpolatedUnivariateSpline(
+                    x=geopotential_matrix_m2_s02[:, i, j][inds],
+                    y=wind_matrix_m_s01[:, i, j][inds],
+                    k=1, ext='extrapolate', check_finite=False
+                )
+            else:
+                interp_object = interp1d(
+                    x=geopotential_matrix_m2_s02[:, i, j],
+                    y=wind_matrix_m_s01[:, i, j],
+                    kind='linear',
+                    axis=0,
+                    bounds_error=False,
+                    fill_value='extrapolate',
+                    assume_sorted=False
+                )
+
+            interp_wind_matrix_m_s01[:, i, j] = interp_object(
+                target_geopotential_matrix_m2_s02[:, i, j]
+            )
+
+    return interp_wind_matrix_m_s01
 
 
 def __interp_humidity_to_surface(
@@ -501,14 +657,6 @@ def __interp_humidity_to_surface(
     num_grid_columns = log10_surface_pressure_matrix_pascals.shape[1]
 
     for i in range(num_grid_rows):
-        # if numpy.mod(i, 10) == 0:
-        #     print((
-        #         'Have estimated surface specific humidity for {0:d} of {1:d} '
-        #         'rows in grid...'
-        #     ).format(
-        #         i, num_grid_rows
-        #     ))
-
         for j in range(num_grid_columns):
             if use_spline:
                 interp_object = InterpolatedUnivariateSpline(
@@ -530,12 +678,6 @@ def __interp_humidity_to_surface(
             surface_spec_humidity_matrix_kg_kg01[i, j] = interp_object(
                 log10_surface_pressure_matrix_pascals[i, j]
             )
-
-    # print((
-    #     'Have estimated surface specific humidity for all {0:d} grid points!'
-    # ).format(
-    #     num_grid_rows * num_grid_columns
-    # ))
 
     return numpy.maximum(surface_spec_humidity_matrix_kg_kg01, 0.)
 
@@ -564,14 +706,6 @@ def __integrate_to_precipitable_water(
     pressure_sort_index_matrix = numpy.argsort(-pressure_matrix_pascals, axis=0)
 
     for i in range(num_grid_rows):
-        # if numpy.mod(i, 10) == 0:
-        #     print((
-        #         'Have estimated precipitable water for {0:d} of {1:d} rows in '
-        #         'grid...'
-        #     ).format(
-        #         i, num_grid_rows
-        #     ))
-
         for j in range(num_grid_columns):
             inds = pressure_sort_index_matrix[:, i, j]
             subinds = numpy.where(numpy.invert(
@@ -595,12 +729,6 @@ def __integrate_to_precipitable_water(
                     axis=0,
                     even='avg'
                 )
-
-    # print((
-    #     'Have estimated precipitable water for all {0:d} grid points!'
-    # ).format(
-    #     num_grid_rows * num_grid_columns
-    # ))
 
     coefficient = -METRES_TO_MM / (WATER_DENSITY_KG_M03 * GRAVITY_M_S02)
     return coefficient * precipitable_water_matrix_kg_m02
@@ -1410,8 +1538,8 @@ def get_precipitable_water(
         dewpoints.
     """
 
-    # TODO(thunderhoser): Need a condition that returns PW if PW is already in
-    # model variables.
+    # TODO(thunderhoser): Might want a condition that returns PW if PW is
+    # already in model variables.
 
     # Check input args.
     if surface_geopotential_matrix_m2_s02 is not None:
@@ -1584,6 +1712,8 @@ def get_wind_shear(
             aux_data_matrix=surface_pressure_matrix_pascals
         )
 
+    error_checking.assert_is_boolean(do_multiprocessing)
+
     top_index = _pressure_level_to_index(
         forecast_table_xarray=forecast_table_xarray,
         desired_pressure_pascals=top_pressure_pascals
@@ -1655,4 +1785,835 @@ def get_wind_shear(
         top_zonal_wind_matrix_m_s01 - bottom_zonal_wind_matrix_m_s01,
         top_merid_wind_matrix_m_s01 - bottom_merid_wind_matrix_m_s01,
         surface_pressure_matrix_pascals
+    )
+
+
+def get_bunkers_storm_motion(
+        forecast_table_xarray, do_multiprocessing,
+        surface_geopotential_matrix_m2_s02,
+        surface_pressure_matrix_pascals=None):
+    """Computes Bunkers right-mover storm motion at every horizontal grid point.
+
+    Emulating non_parcel_bunkers_motion from winds.py in the SHARPpy library,
+    except they use non-pressure-weighted mean wind from 0-6 km AGL, while I use
+    pressure-weighted.
+
+    https://github.com/sharppy/SHARPpy/blob/
+    05bb6f3b415f4c52046179dd080485709603a535/sharppy/sharptab/winds.py#L247
+
+    M = number of rows (latitudes) in grid
+    N = number of columns (longitudes) in grid
+
+    :param forecast_table_xarray: See documentation for `get_cape_and_cin`.
+    :param do_multiprocessing: Same.
+    :param surface_geopotential_matrix_m2_s02: Same.
+    :param surface_pressure_matrix_pascals: Same.
+    :return: zonal_storm_motion_matrix_m_s01: M-by-N numpy array with zonal
+        (eastward) component of storm motion (metres per second).
+    :return: meridional_storm_motion_matrix_m_s01: M-by-N numpy array with
+        meridional (northward) component of storm motion (metres per second).
+    :return: surface_pressure_matrix_pascals: M-by-N numpy array of surface
+        pressures.
+    """
+
+    # Check input args.
+    if surface_geopotential_matrix_m2_s02 is not None:
+        __check_for_matching_grids(
+            forecast_table_xarray=forecast_table_xarray,
+            aux_data_matrix=surface_geopotential_matrix_m2_s02
+        )
+    if surface_pressure_matrix_pascals is not None:
+        __check_for_matching_grids(
+            forecast_table_xarray=forecast_table_xarray,
+            aux_data_matrix=surface_pressure_matrix_pascals
+        )
+
+    error_checking.assert_is_boolean(do_multiprocessing)
+
+    # Estimate surface pressure and dewpoint, if necessary.
+    if surface_pressure_matrix_pascals is None:
+        surface_pressure_matrix_pascals = _estimate_surface_pressure(
+            forecast_table_xarray=forecast_table_xarray,
+            surface_geopotential_matrix_m2_s02=
+            surface_geopotential_matrix_m2_s02,
+            do_multiprocessing=do_multiprocessing,
+            use_spline=True
+        )
+
+    # At each horizontal grid point, find pressure level corresponding to 6 km
+    # above ground level.
+    geopotential_matrix_m2_s02 = forecast_table_xarray[
+        model_utils.GEOPOTENTIAL_M2_S02_KEY
+    ].values[0, ...]
+
+    top_index_matrix = __height_agl_to_nearest_pressure_level(
+        geopotential_matrix_m2_s02=geopotential_matrix_m2_s02,
+        surface_geopotential_matrix_m2_s02=surface_geopotential_matrix_m2_s02,
+        desired_height_m_agl=6000.,
+        find_nearest_level_beneath=False
+    )
+
+    # At each horizontal grid point, get 0--6-km mean wind.  The first three
+    # input matrices to __get_mean_wind -- whose names do not start with
+    # "surface" -- have dimensions (V + 1) x M x N, where V is the number of
+    # vertical model levels and M is the number of rows and N is the number of
+    # columns.  On the first axis, index 0 is the surface and remaining indices
+    # are pressure levels.
+    ftx = forecast_table_xarray
+
+    zonal_wind_matrix_m_s01 = numpy.concatenate([
+        numpy.expand_dims(
+            ftx[model_utils.ZONAL_WIND_10METRES_M_S01_KEY].values[0, ...],
+            axis=0
+        ),
+        ftx[model_utils.ZONAL_WIND_M_S01_KEY].values[0, ...]
+    ], axis=0)
+
+    meridional_wind_matrix_m_s01 = numpy.concatenate([
+        numpy.expand_dims(
+            ftx[model_utils.MERIDIONAL_WIND_10METRES_M_S01_KEY].values[0, ...],
+            axis=0
+        ),
+        ftx[model_utils.MERIDIONAL_WIND_M_S01_KEY].values[0, ...]
+    ], axis=0)
+
+    pressure_matrix_pascals = __get_model_pressure_matrix(
+        forecast_table_xarray=forecast_table_xarray,
+        vertical_axis_first=True
+    )
+    pressure_matrix_pascals = numpy.concatenate([
+        numpy.expand_dims(surface_pressure_matrix_pascals, axis=0),
+        pressure_matrix_pascals
+    ], axis=0)
+
+    top_index_matrix += 1
+
+    (
+        mean_zonal_wind_matrix_m_s01, mean_meridional_wind_matrix_m_s01
+    ) = __get_mean_wind(
+        zonal_wind_matrix_m_s01=zonal_wind_matrix_m_s01,
+        meridional_wind_matrix_m_s01=meridional_wind_matrix_m_s01,
+        bottom_index_matrix=numpy.full(
+            surface_pressure_matrix_pascals.shape, 0, dtype=int
+        ),
+        top_index_matrix=top_index_matrix,
+        pressure_weighted=True,
+        pressure_matrix_pascals=pressure_matrix_pascals,
+        surface_pressure_matrix_pascals=surface_pressure_matrix_pascals
+    )
+
+    # At each horizontal grid point, get 0--6-km wind shear.  Here, we do NOT
+    # need to worry about masking grid points below the surface, because we
+    # have already done this for 0--6-km mean wind.  Thus, at any horizontal
+    # grid point where 6 km is below the surface (Everest?), the two mean-wind
+    # matrices have NaN.
+    top_zonal_wind_matrix_m_s01 = zonal_wind_matrix_m_s01[
+        top_index_matrix,
+        numpy.arange(top_index_matrix.shape[0])[:, None],
+        numpy.arange(top_index_matrix.shape[1])
+    ]
+    zonal_shear_matrix_m_s01 = (
+        top_zonal_wind_matrix_m_s01 - zonal_wind_matrix_m_s01[0, ...]
+    )
+
+    top_meridional_wind_matrix_m_s01 = meridional_wind_matrix_m_s01[
+        top_index_matrix,
+        numpy.arange(top_index_matrix.shape[0])[:, None],
+        numpy.arange(top_index_matrix.shape[1])
+    ]
+    meridional_shear_matrix_m_s01 = (
+        top_meridional_wind_matrix_m_s01 - meridional_wind_matrix_m_s01[0, ...]
+    )
+
+    # Now apply the calculation for Bunkers right-mover storm motion.
+    scalar_shear_matrix_m_s01 = numpy.sqrt(
+        zonal_shear_matrix_m_s01 ** 2 + meridional_shear_matrix_m_s01 ** 2
+    )
+    multiplier_matrix = 7.5 / scalar_shear_matrix_m_s01
+
+    zonal_storm_motion_matrix_m_s01 = (
+        mean_zonal_wind_matrix_m_s01 +
+        (multiplier_matrix * meridional_shear_matrix_m_s01)
+    )
+    meridional_storm_motion_matrix_m_s01 = (
+        mean_meridional_wind_matrix_m_s01 -
+        (multiplier_matrix * zonal_shear_matrix_m_s01)
+    )
+
+    return (
+        zonal_storm_motion_matrix_m_s01,
+        meridional_storm_motion_matrix_m_s01,
+        surface_pressure_matrix_pascals
+    )
+
+
+def get_storm_relative_helicity_slow(
+        forecast_table_xarray, do_multiprocessing, top_height_m_agl,
+        surface_geopotential_matrix_m2_s02,
+        surface_pressure_matrix_pascals=None):
+    """At each horizontal grid point, converts SRH from sfc to a given height.
+
+    Emulating helicity() from winds.py in the SHARPpy library.
+
+    https://github.com/sharppy/SHARPpy/blob/
+    05bb6f3b415f4c52046179dd080485709603a535/sharppy/sharptab/winds.py#L289
+
+    M = number of rows (latitudes) in grid
+    N = number of columns (longitudes) in grid
+
+    :param forecast_table_xarray: See documentation for `get_cape_and_cin`.
+    :param do_multiprocessing: Same.
+    :param top_height_m_agl: Top height (metres above ground level).  Will
+        convert SRH from surface up to this height.
+    :param surface_geopotential_matrix_m2_s02: See documentation for
+        `get_cape_and_cin`.
+    :param surface_pressure_matrix_pascals: Same.
+    :return: positive_helicity_matrix_m2_s02: M-by-N numpy array with integrated
+        positive helicity at each horizontal grid point.
+    :return: negaive_helicity_matrix_m2_s02: M-by-N numpy array with integrated
+        negative helicity at each horizontal grid point.
+    :return: surface_pressure_matrix_pascals: M-by-N numpy array of surface
+        pressures.
+    """
+
+    # Check input args.
+    if surface_geopotential_matrix_m2_s02 is not None:
+        __check_for_matching_grids(
+            forecast_table_xarray=forecast_table_xarray,
+            aux_data_matrix=surface_geopotential_matrix_m2_s02
+        )
+    if surface_pressure_matrix_pascals is not None:
+        __check_for_matching_grids(
+            forecast_table_xarray=forecast_table_xarray,
+            aux_data_matrix=surface_pressure_matrix_pascals
+        )
+
+    error_checking.assert_is_boolean(do_multiprocessing)
+    error_checking.assert_is_greater(top_height_m_agl, 0.)
+
+    # At every horizontal grid point, compute Bunkers right-mover storm motion.
+    (
+        zonal_storm_motion_matrix_m_s01,
+        meridional_storm_motion_matrix_m_s01,
+        surface_pressure_matrix_pascals
+    ) = get_bunkers_storm_motion(
+        forecast_table_xarray=forecast_table_xarray,
+        do_multiprocessing=do_multiprocessing,
+        surface_geopotential_matrix_m2_s02=surface_geopotential_matrix_m2_s02,
+        surface_pressure_matrix_pascals=surface_pressure_matrix_pascals
+    )
+
+    # At every horizontal grid point, find the highest model level between
+    # the surface and `top_height_m_agl`.
+    geopotential_matrix_m2_s02 = forecast_table_xarray[
+        model_utils.GEOPOTENTIAL_M2_S02_KEY
+    ].values[0, ...]
+
+    top_index_matrix = __height_agl_to_nearest_pressure_level(
+        geopotential_matrix_m2_s02=geopotential_matrix_m2_s02,
+        surface_geopotential_matrix_m2_s02=surface_geopotential_matrix_m2_s02,
+        desired_height_m_agl=top_height_m_agl,
+        find_nearest_level_beneath=True
+    )
+
+    # Create three matrices with dimensions (V + 1) x M x N, where V = number
+    # of vertical model levels; M = num rows; N = num columns.  On the first
+    # axis, index 0 is the surface and remaining indices are pressure levels.
+    ftx = forecast_table_xarray
+
+    zonal_wind_matrix_m_s01 = numpy.concatenate([
+        numpy.expand_dims(
+            ftx[model_utils.ZONAL_WIND_10METRES_M_S01_KEY].values[0, ...],
+            axis=0
+        ),
+        ftx[model_utils.ZONAL_WIND_M_S01_KEY].values[0, ...]
+    ], axis=0)
+
+    meridional_wind_matrix_m_s01 = numpy.concatenate([
+        numpy.expand_dims(
+            ftx[model_utils.MERIDIONAL_WIND_10METRES_M_S01_KEY].values[0, ...],
+            axis=0
+        ),
+        ftx[model_utils.MERIDIONAL_WIND_M_S01_KEY].values[0, ...]
+    ], axis=0)
+
+    pressure_matrix_pascals = __get_model_pressure_matrix(
+        forecast_table_xarray=forecast_table_xarray,
+        vertical_axis_first=True
+    )
+    pressure_matrix_pascals = numpy.concatenate([
+        numpy.expand_dims(surface_pressure_matrix_pascals, axis=0),
+        pressure_matrix_pascals
+    ], axis=0)
+
+    # At every horizontal grid point, interpolate the wind to
+    # `top_height_m_agl`.
+    exec_start_time_unix_sec = time.time()
+
+    if do_multiprocessing:
+        start_rows, end_rows = __get_slices_for_multiprocessing(
+            num_grid_rows=geopotential_matrix_m2_s02.shape[1]
+        )
+
+        argument_list = []
+        for s, e in zip(start_rows, end_rows):
+            argument_list.append((
+                zonal_wind_matrix_m_s01[:, s:e, ...],
+                geopotential_matrix_m2_s02[:, s:e, ...],
+                surface_geopotential_matrix_m2_s02[s:e, ...],
+                top_height_m_agl,
+                True
+            ))
+
+        top_zonal_wind_matrix_m_s01 = numpy.full(
+            surface_geopotential_matrix_m2_s02.shape, numpy.nan
+        )
+
+        with Pool() as pool_object:
+            submatrices = pool_object.starmap(
+                __interp_wind_to_height_agl, argument_list
+            )
+
+            for k in range(len(start_rows)):
+                s = start_rows[k]
+                e = end_rows[k]
+                top_zonal_wind_matrix_m_s01[s:e, :] = submatrices[k]
+
+        argument_list = []
+        for s, e in zip(start_rows, end_rows):
+            argument_list.append((
+                meridional_wind_matrix_m_s01[:, s:e, ...],
+                geopotential_matrix_m2_s02[:, s:e, ...],
+                surface_geopotential_matrix_m2_s02[s:e, ...],
+                top_height_m_agl,
+                True
+            ))
+
+        top_meridional_wind_matrix_m_s01 = numpy.full(
+            surface_geopotential_matrix_m2_s02.shape, numpy.nan
+        )
+
+        with Pool() as pool_object:
+            submatrices = pool_object.starmap(
+                __interp_wind_to_height_agl, argument_list
+            )
+
+            for k in range(len(start_rows)):
+                s = start_rows[k]
+                e = end_rows[k]
+                top_meridional_wind_matrix_m_s01[s:e, :] = submatrices[k]
+    else:
+        top_zonal_wind_matrix_m_s01 = __interp_wind_to_height_agl(
+            wind_matrix_m_s01=zonal_wind_matrix_m_s01,
+            geopotential_matrix_m2_s02=geopotential_matrix_m2_s02,
+            surface_geopotential_matrix_m2_s02=
+            surface_geopotential_matrix_m2_s02,
+            target_height_m_agl=top_height_m_agl,
+            use_spline=True
+        )
+
+        top_meridional_wind_matrix_m_s01 = __interp_wind_to_height_agl(
+            wind_matrix_m_s01=meridional_wind_matrix_m_s01,
+            geopotential_matrix_m2_s02=geopotential_matrix_m2_s02,
+            surface_geopotential_matrix_m2_s02=
+            surface_geopotential_matrix_m2_s02,
+            target_height_m_agl=top_height_m_agl,
+            use_spline=True
+        )
+
+    assert not numpy.any(numpy.isnan(top_zonal_wind_matrix_m_s01))
+    assert not numpy.any(numpy.isnan(top_meridional_wind_matrix_m_s01))
+
+    print('Interpolating wind to {0:.1f} m AGL took {1:.1f} seconds.'.format(
+        top_height_m_agl,
+        time.time() - exec_start_time_unix_sec
+    ))
+
+    # Mask out wind values below the surface or above `top_height_m_agl`.
+    num_vertical_levels = zonal_wind_matrix_m_s01.shape[0]
+    vertical_indices = numpy.linspace(
+        0, num_vertical_levels - 1, num=num_vertical_levels, dtype=int
+    )
+    vertical_index_matrix = numpy.expand_dims(vertical_indices, axis=-1)
+    vertical_index_matrix = numpy.expand_dims(vertical_index_matrix, axis=-1)
+
+    top_index_matrix += 1
+    top_index_matrix = numpy.expand_dims(top_index_matrix, axis=0)
+
+    mask_out_matrix = numpy.logical_or(
+        vertical_index_matrix > top_index_matrix,
+        pressure_matrix_pascals - 0.1 >
+        numpy.expand_dims(surface_pressure_matrix_pascals, axis=0)
+    )
+    zonal_wind_matrix_m_s01[mask_out_matrix] = numpy.nan
+    # meridional_wind_matrix_m_s01[mask_out_matrix] = numpy.nan  # Redundant.
+
+    zonal_wind_matrix_m_s01 = numpy.concatenate([
+        zonal_wind_matrix_m_s01,
+        numpy.expand_dims(top_zonal_wind_matrix_m_s01, axis=0)
+    ], axis=0)
+
+    meridional_wind_matrix_m_s01 = numpy.concatenate([
+        meridional_wind_matrix_m_s01,
+        numpy.expand_dims(top_meridional_wind_matrix_m_s01, axis=0)
+    ], axis=0)
+
+    # Now apply the calculation for storm-relative helicity.
+    sr_zonal_wind_matrix_m_s01 = (
+        zonal_wind_matrix_m_s01 -
+        numpy.expand_dims(zonal_storm_motion_matrix_m_s01, axis=0)
+    )
+    sr_meridional_wind_matrix_m_s01 = (
+        meridional_wind_matrix_m_s01 -
+        numpy.expand_dims(meridional_storm_motion_matrix_m_s01, axis=0)
+    )
+
+    num_rows = sr_zonal_wind_matrix_m_s01.shape[1]
+    num_columns = sr_zonal_wind_matrix_m_s01.shape[2]
+    positive_helicity_matrix_m2_s02 = numpy.full(
+        (num_rows, num_columns), numpy.nan
+    )
+    negative_helicity_matrix_m2_s02 = numpy.full(
+        (num_rows, num_columns), numpy.nan
+    )
+
+    for i in range(num_rows):
+        for j in range(num_columns):
+            real_flags = numpy.isfinite(sr_zonal_wind_matrix_m_s01[:, i, j])
+
+            layerwise_helicities_m2_s02 = (
+                sr_zonal_wind_matrix_m_s01[real_flags, i, j][1:] *
+                sr_meridional_wind_matrix_m_s01[real_flags, i, j][:-1] -
+
+                sr_zonal_wind_matrix_m_s01[real_flags, i, j][:-1] *
+                sr_meridional_wind_matrix_m_s01[real_flags, i, j][1:]
+            )
+
+            positive_helicity_matrix_m2_s02[i, j] = numpy.sum(
+                numpy.maximum(layerwise_helicities_m2_s02, 0.)
+            )
+            negative_helicity_matrix_m2_s02 = numpy.sum(
+                numpy.minimum(layerwise_helicities_m2_s02, 0.)
+            )
+
+    return (
+        positive_helicity_matrix_m2_s02,
+        negative_helicity_matrix_m2_s02,
+        surface_pressure_matrix_pascals
+    )
+
+
+def get_storm_relative_helicity(
+        forecast_table_xarray, do_multiprocessing, top_heights_m_agl,
+        surface_geopotential_matrix_m2_s02,
+        surface_pressure_matrix_pascals=None):
+    """At each horizontal grid point, converts SRH from sfc to a given height.
+
+    Emulating helicity() from winds.py in the SHARPpy library.
+
+    https://github.com/sharppy/SHARPpy/blob/
+    05bb6f3b415f4c52046179dd080485709603a535/sharppy/sharptab/winds.py#L289
+
+    M = number of rows (latitudes) in grid
+    N = number of columns (longitudes) in grid
+    L = number of layers for which to compute helicity
+
+    :param forecast_table_xarray: See documentation for `get_cape_and_cin`.
+    :param do_multiprocessing: Same.
+    :param top_heights_m_agl: length-L numpy array of top heights (metres above
+        ground level).  Will convert SRH from surface up to each height.
+    :param surface_geopotential_matrix_m2_s02: See documentation for
+        `get_cape_and_cin`.
+    :param surface_pressure_matrix_pascals: Same.
+    :return: positive_helicity_matrix_m2_s02: M-by-N numpy array with integrated
+        positive helicity at each horizontal grid point.
+    :return: negaive_helicity_matrix_m2_s02: M-by-N numpy array with integrated
+        negative helicity at each horizontal grid point.
+    :return: surface_pressure_matrix_pascals: M-by-N numpy array of surface
+        pressures.
+    """
+
+    # Check input args.
+    if surface_geopotential_matrix_m2_s02 is not None:
+        __check_for_matching_grids(
+            forecast_table_xarray=forecast_table_xarray,
+            aux_data_matrix=surface_geopotential_matrix_m2_s02
+        )
+    if surface_pressure_matrix_pascals is not None:
+        __check_for_matching_grids(
+            forecast_table_xarray=forecast_table_xarray,
+            aux_data_matrix=surface_pressure_matrix_pascals
+        )
+
+    error_checking.assert_is_boolean(do_multiprocessing)
+    error_checking.assert_is_numpy_array(top_heights_m_agl, num_dimensions=1)
+    error_checking.assert_is_greater_numpy_array(top_heights_m_agl, 0.)
+
+    # Get rid of non-unique top heights.
+    top_heights_m_agl = numpy.round(top_heights_m_agl).astype(int)
+    top_heights_m_agl = numpy.unique(top_heights_m_agl)
+
+    # At every horizontal grid point, compute Bunkers right-mover storm motion.
+    (
+        zonal_storm_motion_matrix_m_s01,
+        meridional_storm_motion_matrix_m_s01,
+        surface_pressure_matrix_pascals
+    ) = get_bunkers_storm_motion(
+        forecast_table_xarray=forecast_table_xarray,
+        do_multiprocessing=do_multiprocessing,
+        surface_geopotential_matrix_m2_s02=surface_geopotential_matrix_m2_s02,
+        surface_pressure_matrix_pascals=surface_pressure_matrix_pascals
+    )
+
+    # Create three matrices with dimensions (V + 1) x M x N, where V = number
+    # of vertical model levels; M = num rows; N = num columns.  On the first
+    # axis, index 0 is the surface and remaining indices are pressure levels.
+    ftx = forecast_table_xarray
+
+    zonal_wind_matrix_m_s01 = numpy.concatenate([
+        numpy.expand_dims(
+            ftx[model_utils.ZONAL_WIND_10METRES_M_S01_KEY].values[0, ...],
+            axis=0
+        ),
+        ftx[model_utils.ZONAL_WIND_M_S01_KEY].values[0, ...]
+    ], axis=0)
+
+    meridional_wind_matrix_m_s01 = numpy.concatenate([
+        numpy.expand_dims(
+            ftx[model_utils.MERIDIONAL_WIND_10METRES_M_S01_KEY].values[0, ...],
+            axis=0
+        ),
+        ftx[model_utils.MERIDIONAL_WIND_M_S01_KEY].values[0, ...]
+    ], axis=0)
+
+    # Determine target heights, to which wind will be interpolated.
+    num_interp_heights = int(numpy.ceil(
+        float(numpy.max(top_heights_m_agl)) / HEIGHT_SPACING_FOR_HELICITY_METRES
+    ))
+    interp_heights_m_agl = numpy.linspace(
+        0, numpy.max(top_heights_m_agl), num=num_interp_heights + 1, dtype=int
+    )[1:]
+
+    for this_top_height_m_agl in top_heights_m_agl:
+        if this_top_height_m_agl in interp_heights_m_agl:
+            continue
+
+        interp_heights_m_agl = numpy.concatenate([
+            interp_heights_m_agl,
+            numpy.array([this_top_height_m_agl], dtype=int)
+        ])
+
+    interp_heights_m_agl = numpy.unique(interp_heights_m_agl).astype(float)
+    num_interp_heights = len(interp_heights_m_agl)
+
+    # At every horizontal grid point, interpolate the wind to all target
+    # heights.
+    geopotential_matrix_m2_s02 = forecast_table_xarray[
+        model_utils.GEOPOTENTIAL_M2_S02_KEY
+    ].values[0, ...]
+
+    exec_start_time_unix_sec = time.time()
+
+    if do_multiprocessing:
+        start_rows, end_rows = __get_slices_for_multiprocessing(
+            num_grid_rows=geopotential_matrix_m2_s02.shape[1]
+        )
+
+        argument_list = []
+        for s, e in zip(start_rows, end_rows):
+            argument_list.append((
+                zonal_wind_matrix_m_s01[:, s:e, ...],
+                geopotential_matrix_m2_s02[:, s:e, ...],
+                surface_geopotential_matrix_m2_s02[s:e, ...],
+                interp_heights_m_agl,
+                True
+            ))
+
+        interp_zonal_wind_matrix_m_s01 = numpy.full(
+            (num_interp_heights,) + surface_geopotential_matrix_m2_s02.shape,
+            numpy.nan
+        )
+
+        with Pool() as pool_object:
+            submatrices = pool_object.starmap(
+                __interp_wind_to_heights_agl, argument_list
+            )
+
+            for k in range(len(start_rows)):
+                s = start_rows[k]
+                e = end_rows[k]
+                interp_zonal_wind_matrix_m_s01[:, s:e, :] = submatrices[k]
+
+        argument_list = []
+        for s, e in zip(start_rows, end_rows):
+            argument_list.append((
+                meridional_wind_matrix_m_s01[:, s:e, ...],
+                geopotential_matrix_m2_s02[:, s:e, ...],
+                surface_geopotential_matrix_m2_s02[s:e, ...],
+                interp_heights_m_agl,
+                True
+            ))
+
+        interp_meridional_wind_matrix_m_s01 = numpy.full(
+            (num_interp_heights,) + surface_geopotential_matrix_m2_s02.shape,
+            numpy.nan
+        )
+
+        with Pool() as pool_object:
+            submatrices = pool_object.starmap(
+                __interp_wind_to_heights_agl, argument_list
+            )
+
+            for k in range(len(start_rows)):
+                s = start_rows[k]
+                e = end_rows[k]
+                interp_meridional_wind_matrix_m_s01[:, s:e, :] = submatrices[k]
+    else:
+        interp_zonal_wind_matrix_m_s01 = __interp_wind_to_heights_agl(
+            wind_matrix_m_s01=zonal_wind_matrix_m_s01,
+            geopotential_matrix_m2_s02=geopotential_matrix_m2_s02,
+            surface_geopotential_matrix_m2_s02=
+            surface_geopotential_matrix_m2_s02,
+            target_heights_m_agl=interp_heights_m_agl,
+            use_spline=True
+        )
+
+        interp_meridional_wind_matrix_m_s01 = __interp_wind_to_heights_agl(
+            wind_matrix_m_s01=meridional_wind_matrix_m_s01,
+            geopotential_matrix_m2_s02=geopotential_matrix_m2_s02,
+            surface_geopotential_matrix_m2_s02=
+            surface_geopotential_matrix_m2_s02,
+            target_heights_m_agl=interp_heights_m_agl,
+            use_spline=True
+        )
+
+    assert not numpy.any(numpy.isnan(interp_zonal_wind_matrix_m_s01))
+    assert not numpy.any(numpy.isnan(interp_meridional_wind_matrix_m_s01))
+
+    print('Interpolating wind to {0:s} m AGL took {1:.1f} seconds.'.format(
+        str(interp_heights_m_agl),
+        time.time() - exec_start_time_unix_sec
+    ))
+
+    # Add surface wind to both matrices.
+    interp_zonal_wind_matrix_m_s01 = numpy.concatenate([
+        zonal_wind_matrix_m_s01[[0], ...],
+        interp_zonal_wind_matrix_m_s01
+    ], axis=0)
+
+    interp_meridional_wind_matrix_m_s01 = numpy.concatenate([
+        meridional_wind_matrix_m_s01[[0], ...],
+        interp_meridional_wind_matrix_m_s01
+    ], axis=0)
+
+    interp_heights_m_agl = numpy.concatenate([
+        numpy.array([0.]),
+        interp_heights_m_agl
+    ])
+
+    # Now apply the calculation for storm-relative helicity.
+    sr_interp_zonal_wind_matrix_m_s01 = (
+        interp_zonal_wind_matrix_m_s01 -
+        numpy.expand_dims(zonal_storm_motion_matrix_m_s01, axis=0)
+    )
+    sr_interp_meridional_wind_matrix_m_s01 = (
+        interp_meridional_wind_matrix_m_s01 -
+        numpy.expand_dims(meridional_storm_motion_matrix_m_s01, axis=0)
+    )
+
+    num_top_heights = len(top_heights_m_agl)
+    num_grid_rows = zonal_storm_motion_matrix_m_s01.shape[0]
+    num_grid_columns = zonal_storm_motion_matrix_m_s01.shape[1]
+
+    these_dim = (num_top_heights, num_grid_rows, num_grid_columns)
+    positive_helicity_matrix_m2_s02 = numpy.full(these_dim, numpy.nan)
+    negative_helicity_matrix_m2_s02 = numpy.full(these_dim, numpy.nan)
+
+    for k in range(num_top_heights):
+        this_top_index = numpy.argmin(numpy.absolute(
+            top_heights_m_agl[k] - interp_heights_m_agl
+        ))
+
+        layerwise_helicity_matrix_m2_s02 = (
+            sr_interp_zonal_wind_matrix_m_s01[1:(this_top_index + 1), ...] *
+            sr_interp_meridional_wind_matrix_m_s01[:this_top_index, ...] -
+
+            sr_interp_zonal_wind_matrix_m_s01[:this_top_index, ...] *
+            sr_interp_meridional_wind_matrix_m_s01[1:(this_top_index + 1), ...]
+        )
+
+        positive_helicity_matrix_m2_s02[k, ...] = numpy.sum(
+            numpy.maximum(layerwise_helicity_matrix_m2_s02, 0.), axis=0
+        )
+        negative_helicity_matrix_m2_s02[k, ...] = numpy.sum(
+            numpy.minimum(layerwise_helicity_matrix_m2_s02, 0.), axis=0
+        )
+
+    return (
+        positive_helicity_matrix_m2_s02,
+        negative_helicity_matrix_m2_s02,
+        surface_pressure_matrix_pascals
+    )
+
+
+def get_pbl_height(
+        forecast_table_xarray, do_multiprocessing,
+        surface_geopotential_matrix_m2_s02,
+        surface_pressure_matrix_pascals=None,
+        surface_dewpoint_matrix_kelvins=None):
+    """At each horizontal grid point, computes hgt of planetary boundary layer.
+
+    Defined as lowest height where theta_v (virtual potential temperature) >=
+    theta_v*, where theta_v* = surface theta_v + 0.5 Kelvins.
+
+    Emulating pbl_top() from params.py in the SHARPpy library.
+
+    https://github.com/sharppy/SHARPpy/blob/
+    05bb6f3b415f4c52046179dd080485709603a535/sharppy/sharptab/params.py#L2997
+
+    M = number of rows (latitudes) in grid
+    N = number of columns (longitudes) in grid
+
+    :param forecast_table_xarray: See documentation for `get_cape_and_cin`.
+    :param do_multiprocessing: Same.
+    :param surface_geopotential_matrix_m2_s02: Same.
+    :param surface_pressure_matrix_pascals: Same.
+    :param surface_dewpoint_matrix_kelvins: Same.
+    :return: pbl_height_matrix_m_agl: M-by-N numpy array of PBL heights (metres
+        above ground level).
+    :return: surface_pressure_matrix_pascals: M-by-N numpy array of surface
+        pressures.
+    :return: surface_dewpoint_matrix_kelvins: M-by-N numpy array of surface
+        dewpoints.
+    """
+
+    # Check input args.
+    if surface_geopotential_matrix_m2_s02 is not None:
+        __check_for_matching_grids(
+            forecast_table_xarray=forecast_table_xarray,
+            aux_data_matrix=surface_geopotential_matrix_m2_s02
+        )
+    if surface_pressure_matrix_pascals is not None:
+        __check_for_matching_grids(
+            forecast_table_xarray=forecast_table_xarray,
+            aux_data_matrix=surface_pressure_matrix_pascals
+        )
+    if surface_dewpoint_matrix_kelvins is not None:
+        __check_for_matching_grids(
+            forecast_table_xarray=forecast_table_xarray,
+            aux_data_matrix=surface_dewpoint_matrix_kelvins
+        )
+
+    error_checking.assert_is_boolean(do_multiprocessing)
+
+    # Estimate surface pressure and dewpoint, if necessary.
+    if surface_pressure_matrix_pascals is None:
+        surface_pressure_matrix_pascals = _estimate_surface_pressure(
+            forecast_table_xarray=forecast_table_xarray,
+            surface_geopotential_matrix_m2_s02=
+            surface_geopotential_matrix_m2_s02,
+            do_multiprocessing=do_multiprocessing,
+            use_spline=True
+        )
+
+    if surface_dewpoint_matrix_kelvins is None:
+        surface_dewpoint_matrix_kelvins = _estimate_surface_dewpoint(
+            forecast_table_xarray=forecast_table_xarray,
+            surface_pressure_matrix_pascals=surface_pressure_matrix_pascals,
+            do_multiprocessing=do_multiprocessing,
+            use_spline=True
+        )
+
+    # Compute theta_v everywhere in the 3-D grid.
+    surface_temp_matrix_kelvins = forecast_table_xarray[
+        model_utils.TEMPERATURE_2METRES_KELVINS_KEY
+    ].values[0, ...]
+
+    surface_vapour_pressure_matrix_pascals = (
+        moisture_conv.dewpoint_to_vapour_pressure(
+            dewpoints_kelvins=surface_dewpoint_matrix_kelvins,
+            temperatures_kelvins=surface_temp_matrix_kelvins,
+            total_pressures_pascals=surface_pressure_matrix_pascals
+        )
+    )
+
+    surface_virtual_temp_matrix_kelvins = (
+        moisture_conv.temperature_to_virtual_temperature(
+            temperatures_kelvins=surface_temp_matrix_kelvins,
+            total_pressures_pascals=surface_pressure_matrix_pascals,
+            vapour_pressures_pascals=surface_vapour_pressure_matrix_pascals
+        )
+    )
+
+    surface_theta_v_matrix_kelvins = (
+        temperature_conv.temperatures_to_potential_temperatures(
+            temperatures_kelvins=surface_virtual_temp_matrix_kelvins,
+            total_pressures_pascals=surface_pressure_matrix_pascals
+        )
+    )
+
+    aloft_spec_humidity_matrix_kg_kg01 = forecast_table_xarray[
+        model_utils.SPECIFIC_HUMIDITY_KG_KG01_KEY
+    ].values[0, ...]
+
+    aloft_mixing_ratio_matrix_kg_kg01 = (
+        moisture_conv.specific_humidity_to_mixing_ratio(
+            aloft_spec_humidity_matrix_kg_kg01
+        )
+    )
+
+    aloft_pressure_matrix_pascals = __get_model_pressure_matrix(
+        forecast_table_xarray=forecast_table_xarray,
+        vertical_axis_first=True
+    )
+    aloft_vapour_pressure_matrix_pascals = (
+        moisture_conv.mixing_ratio_to_vapour_pressure(
+            mixing_ratios_kg_kg01=aloft_mixing_ratio_matrix_kg_kg01,
+            total_pressures_pascals=aloft_pressure_matrix_pascals
+        )
+    )
+
+    aloft_temp_matrix_kelvins = forecast_table_xarray[
+        model_utils.TEMPERATURE_KELVINS_KEY
+    ].values[0, ...]
+
+    aloft_virtual_temp_matrix_kelvins = (
+        moisture_conv.temperature_to_virtual_temperature(
+            temperatures_kelvins=aloft_temp_matrix_kelvins,
+            total_pressures_pascals=aloft_pressure_matrix_pascals,
+            vapour_pressures_pascals=aloft_vapour_pressure_matrix_pascals
+        )
+    )
+
+    aloft_theta_v_matrix_kelvins = (
+        temperature_conv.temperatures_to_potential_temperatures(
+            temperatures_kelvins=aloft_virtual_temp_matrix_kelvins,
+            total_pressures_pascals=aloft_pressure_matrix_pascals
+        )
+    )
+
+    full_theta_v_matrix_kelvins = numpy.concatenate([
+        numpy.expand_dims(surface_theta_v_matrix_kelvins, axis=0),
+        aloft_theta_v_matrix_kelvins
+    ], axis=0)
+
+    aloft_geopotential_matrix_m2_s02 = forecast_table_xarray[
+        model_utils.GEOPOTENTIAL_M2_S02_KEY
+    ].values[0, ...]
+
+    full_geopotential_matrix_m2_s02 = numpy.concatenate([
+        numpy.expand_dims(surface_geopotential_matrix_m2_s02, axis=0),
+        aloft_geopotential_matrix_m2_s02
+    ], axis=0)
+
+    pbl_height_matrix_m_agl = __get_pbl_height(
+        theta_v_matrix_kelvins=full_theta_v_matrix_kelvins,
+        geopotential_matrix_m2_s02=full_geopotential_matrix_m2_s02,
+        theta_v_deviation_threshold_kelvins=0.5
+    )
+
+    return (
+        pbl_height_matrix_m_agl,
+        surface_pressure_matrix_pascals,
+        surface_dewpoint_matrix_kelvins
     )
