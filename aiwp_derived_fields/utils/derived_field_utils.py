@@ -35,27 +35,47 @@ PRECIPITABLE_WATER_NAME = 'precipitable_water_kg_m02'
 SCALAR_WIND_SHEAR_NAME = 'scalar_wind_shear_m_s01'
 ZONAL_WIND_SHEAR_NAME = 'zonal_wind_shear_m_s01'
 MERIDIONAL_WIND_SHEAR_NAME = 'meridional_wind_shear_m_s01'
+SCALAR_STORM_MOTION_NAME = 'bunkers_right_mover_storm_motion_m_s01'
+ZONAL_STORM_MOTION_NAME = 'bunkers_right_mover_zonal_storm_motion_m_s01'
+MERIDIONAL_STORM_MOTION_NAME = (
+    'bunkers_right_mover_meridional_storm_motion_m_s01'
+)
+HELICITY_NAME = 'storm_relative_helicity_m2_s02'
+POSITIVE_HELICITY_NAME = 'storm_relative_positive_helicity_m2_s02'
+NEGATIVE_HELICITY_NAME = 'storm_relative_negative_helicity_m2_s02'
+PBL_HEIGHT_NAME = 'planetary_boundary_layer_height_m_agl'
 
 CAPE_CIN_NAMES = [
     MOST_UNSTABLE_CAPE_NAME, MOST_UNSTABLE_CIN_NAME,
     SURFACE_BASED_CAPE_NAME, SURFACE_BASED_CIN_NAME,
     MIXED_LAYER_CAPE_NAME, MIXED_LAYER_CIN_NAME
 ]
-BASIC_FIELD_NAMES_NO_VEC_ELEMENTS = CAPE_CIN_NAMES + [
-    LIFTED_INDEX_NAME, PRECIPITABLE_WATER_NAME, SCALAR_WIND_SHEAR_NAME
-]
-BASIC_FIELD_NAMES_WITH_VEC_ELEMENTS = CAPE_CIN_NAMES + [
+BASIC_FIELD_NAMES_TO_COMPUTE = CAPE_CIN_NAMES + [
     LIFTED_INDEX_NAME, PRECIPITABLE_WATER_NAME,
-    ZONAL_WIND_SHEAR_NAME, MERIDIONAL_WIND_SHEAR_NAME
+    SCALAR_WIND_SHEAR_NAME, SCALAR_STORM_MOTION_NAME,
+    HELICITY_NAME, PBL_HEIGHT_NAME
+]
+BASIC_FIELD_NAMES_COMPUTED = CAPE_CIN_NAMES + [
+    LIFTED_INDEX_NAME, PRECIPITABLE_WATER_NAME,
+    ZONAL_WIND_SHEAR_NAME, MERIDIONAL_WIND_SHEAR_NAME,
+    ZONAL_STORM_MOTION_NAME, MERIDIONAL_STORM_MOTION_NAME,
+    POSITIVE_HELICITY_NAME, NEGATIVE_HELICITY_NAME,
+    PBL_HEIGHT_NAME
 ]
 WIND_SHEAR_NAMES = [
     SCALAR_WIND_SHEAR_NAME, ZONAL_WIND_SHEAR_NAME, MERIDIONAL_WIND_SHEAR_NAME
 ]
+STORM_MOTION_NAMES = [
+    SCALAR_STORM_MOTION_NAME, ZONAL_STORM_MOTION_NAME,
+    MERIDIONAL_STORM_MOTION_NAME
+]
+HELICITY_NAMES = [HELICITY_NAME, POSITIVE_HELICITY_NAME, NEGATIVE_HELICITY_NAME]
 
 BASIC_FIELD_KEY = 'basic_field_name'
 PARCEL_SOURCE_KEY = 'parcel_source_string'
 MIXED_LAYER_DEPTH_KEY = 'mixed_layer_depth_metres'
 TOP_PRESSURE_KEY = 'top_pressure_pascals'
+TOP_HEIGHT_KEY = 'top_height_m_agl'
 BOTTOM_PRESSURE_KEY = 'bottom_pressure_pascals'
 
 SURFACE_PARCEL_SOURCE_STRING = 'surface'
@@ -83,6 +103,43 @@ def __starmap_with_kwargs(pool_object, function_object, args_iter, kwargs_iter):
 
 def __apply_args_and_kwargs(function_object, args, kwargs):
     return function_object(*args, **kwargs)
+
+
+def __height_to_geopotential(height_metres):
+    """Converts height to geopotential.
+
+    The input may be a scalar or an array with any shape.
+
+    If the input is surface-relative (i.e., metres above ground level), the
+    output will also be surface-relative (i.e., geopotential with respect to
+    ground level).
+
+    If the input is sea-level-relative (i.e., metres above sea level), the
+    output will also be sea-level-relative (i.e., geopotential with respect to
+    sea level).
+
+    :param height_metres: Input (scalar or array of any shape).
+    :return: geopotential_m2_s02: Geopotential (units of m^2 s^-2).
+    """
+
+    numerator = GRAVITY_M_S02 * EARTH_RADIUS_METRES * height_metres
+    denominator = EARTH_RADIUS_METRES + height_metres
+    return numerator / denominator
+
+
+def __geopotential_to_height(geopotential_m2_s02):
+    """Converts geopotential to height.
+
+    This method is the inverse of `__height_to_geopotential`.
+
+    :param geopotential_m2_s02: See documentation for
+        `__height_to_geopotential`.
+    :return: height_metres: Same.
+    """
+
+    numerator = EARTH_RADIUS_METRES * geopotential_m2_s02
+    denominator = GRAVITY_M_S02 * EARTH_RADIUS_METRES - geopotential_m2_s02
+    return numerator / denominator
 
 
 def __check_for_matching_grids(forecast_table_xarray, aux_data_matrix):
@@ -212,9 +269,9 @@ def __height_agl_to_nearest_pressure_level(
         the desired ground-relative height.
     """
 
-    numerator = GRAVITY_M_S02 * EARTH_RADIUS_METRES * desired_height_m_agl
-    denominator = EARTH_RADIUS_METRES + desired_height_m_agl
-    desired_sfc_relative_geoptl_m2_s02 = numerator / denominator
+    desired_sfc_relative_geoptl_m2_s02 = __height_to_geopotential(
+        desired_height_m_agl
+    )
     desired_geopotential_matrix_m2_s02 = (
         surface_geopotential_matrix_m2_s02 + desired_sfc_relative_geoptl_m2_s02
     )
@@ -477,13 +534,9 @@ def __get_pbl_height(
     pbl_top_sfc_relative_geoptl_matrix_m2_s02 = (
         pbl_top_geopotential_matrix_m2_s02 - geopotential_matrix_m2_s02[0, ...]
     )
-    
-    numerator = EARTH_RADIUS_METRES * pbl_top_sfc_relative_geoptl_matrix_m2_s02
-    denominator = (
-        GRAVITY_M_S02 * EARTH_RADIUS_METRES -
+    pbl_height_matrix_m_agl = __geopotential_to_height(
         pbl_top_sfc_relative_geoptl_matrix_m2_s02
     )
-    pbl_height_matrix_m_agl = numerator / denominator
 
     # Because of the "minus 0.1" in my comparisons with the surface, sometimes
     # the PBL height is slightly negative.
@@ -578,10 +631,9 @@ def __interp_wind_to_heights_agl(
         speeds.
     """
 
-    numerator = GRAVITY_M_S02 * EARTH_RADIUS_METRES * target_heights_m_agl
-    denominator = EARTH_RADIUS_METRES + target_heights_m_agl
-    target_sfc_relative_geoptls_m2_s02 = numerator / denominator
-
+    target_sfc_relative_geoptls_m2_s02 = __height_to_geopotential(
+        target_heights_m_agl
+    )
     target_geopotential_matrix_m2_s02 = numpy.stack([
         surface_geopotential_matrix_m2_s02 + g
         for g in target_sfc_relative_geoptls_m2_s02
@@ -951,6 +1003,17 @@ def create_field_name(metadata_dict):
     basic_field_name = metadata_dict[BASIC_FIELD_KEY]
     derived_field_name = basic_field_name.replace('_', '-')
 
+    if basic_field_name in STORM_MOTION_NAMES:
+        return derived_field_name
+    if basic_field_name == PBL_HEIGHT_NAME:
+        return derived_field_name
+
+    if basic_field_name in HELICITY_NAMES:
+        derived_field_name += '_top-height-m-agl={0:.4f}'.format(
+            metadata_dict[TOP_HEIGHT_KEY]
+        )
+        return derived_field_name
+
     if (
             basic_field_name in CAPE_CIN_NAMES
             and basic_field_name not in
@@ -1004,6 +1067,8 @@ def parse_field_name(derived_field_name, is_field_to_compute):
         mixed-layer CAPE or CIN; otherwise, None).
     metadata_dict["top_pressure_pascals"]: Top pressure level (only for certain
         fields; otherwise, None).
+    metadata_dict["top_height_m_agl"]: Top height in metres above ground level
+        (only for certain fields; otherwise, None).
     metadata_dict["bottom_pressure_pascals"]: Bottom pressure level (only for
         certain fields; otherwise, None).
     """
@@ -1012,8 +1077,8 @@ def parse_field_name(derived_field_name, is_field_to_compute):
     error_checking.assert_is_boolean(is_field_to_compute)
 
     valid_basic_field_names = (
-        BASIC_FIELD_NAMES_NO_VEC_ELEMENTS if is_field_to_compute
-        else BASIC_FIELD_NAMES_WITH_VEC_ELEMENTS
+        BASIC_FIELD_NAMES_TO_COMPUTE if is_field_to_compute
+        else BASIC_FIELD_NAMES_COMPUTED
     )
 
     basic_field_name = derived_field_name.split('_')[0].replace('-', '_')
@@ -1033,8 +1098,12 @@ def parse_field_name(derived_field_name, is_field_to_compute):
         PARCEL_SOURCE_KEY: None,
         MIXED_LAYER_DEPTH_KEY: None,
         TOP_PRESSURE_KEY: None,
+        TOP_HEIGHT_KEY: None,
         BOTTOM_PRESSURE_KEY: None
     }
+
+    if basic_field_name in STORM_MOTION_NAMES + [PBL_HEIGHT_NAME]:
+        return metadata_dict
 
     if basic_field_name in [MOST_UNSTABLE_CAPE_NAME, MOST_UNSTABLE_CIN_NAME]:
         metadata_dict[PARCEL_SOURCE_KEY] = MOST_UNSTABLE_PARCEL_SOURCE_STRING
@@ -1060,6 +1129,18 @@ def parse_field_name(derived_field_name, is_field_to_compute):
         assert mixed_layer_depth_metres > 0.
 
         metadata_dict[MIXED_LAYER_DEPTH_KEY] = mixed_layer_depth_metres
+        return metadata_dict
+
+    if basic_field_name in HELICITY_NAMES:
+        this_word = derived_field_name.split('_')[1]
+        assert this_word.startswith('top-height-m-agl=')
+
+        top_height_m_agl = float(
+            this_word.replace('top-height-m-agl=', '', 1)
+        )
+        assert top_height_m_agl > 0.
+
+        metadata_dict[TOP_HEIGHT_KEY] = top_height_m_agl
         return metadata_dict
 
     if basic_field_name in (
@@ -1947,262 +2028,6 @@ def get_bunkers_storm_motion(
     )
 
 
-def get_storm_relative_helicity_slow(
-        forecast_table_xarray, do_multiprocessing, top_height_m_agl,
-        surface_geopotential_matrix_m2_s02,
-        surface_pressure_matrix_pascals=None):
-    """At each horizontal grid point, converts SRH from sfc to a given height.
-
-    Emulating helicity() from winds.py in the SHARPpy library.
-
-    https://github.com/sharppy/SHARPpy/blob/
-    05bb6f3b415f4c52046179dd080485709603a535/sharppy/sharptab/winds.py#L289
-
-    M = number of rows (latitudes) in grid
-    N = number of columns (longitudes) in grid
-
-    :param forecast_table_xarray: See documentation for `get_cape_and_cin`.
-    :param do_multiprocessing: Same.
-    :param top_height_m_agl: Top height (metres above ground level).  Will
-        convert SRH from surface up to this height.
-    :param surface_geopotential_matrix_m2_s02: See documentation for
-        `get_cape_and_cin`.
-    :param surface_pressure_matrix_pascals: Same.
-    :return: positive_helicity_matrix_m2_s02: M-by-N numpy array with integrated
-        positive helicity at each horizontal grid point.
-    :return: negaive_helicity_matrix_m2_s02: M-by-N numpy array with integrated
-        negative helicity at each horizontal grid point.
-    :return: surface_pressure_matrix_pascals: M-by-N numpy array of surface
-        pressures.
-    """
-
-    # Check input args.
-    if surface_geopotential_matrix_m2_s02 is not None:
-        __check_for_matching_grids(
-            forecast_table_xarray=forecast_table_xarray,
-            aux_data_matrix=surface_geopotential_matrix_m2_s02
-        )
-    if surface_pressure_matrix_pascals is not None:
-        __check_for_matching_grids(
-            forecast_table_xarray=forecast_table_xarray,
-            aux_data_matrix=surface_pressure_matrix_pascals
-        )
-
-    error_checking.assert_is_boolean(do_multiprocessing)
-    error_checking.assert_is_greater(top_height_m_agl, 0.)
-
-    # At every horizontal grid point, compute Bunkers right-mover storm motion.
-    (
-        zonal_storm_motion_matrix_m_s01,
-        meridional_storm_motion_matrix_m_s01,
-        surface_pressure_matrix_pascals
-    ) = get_bunkers_storm_motion(
-        forecast_table_xarray=forecast_table_xarray,
-        do_multiprocessing=do_multiprocessing,
-        surface_geopotential_matrix_m2_s02=surface_geopotential_matrix_m2_s02,
-        surface_pressure_matrix_pascals=surface_pressure_matrix_pascals
-    )
-
-    # At every horizontal grid point, find the highest model level between
-    # the surface and `top_height_m_agl`.
-    geopotential_matrix_m2_s02 = forecast_table_xarray[
-        model_utils.GEOPOTENTIAL_M2_S02_KEY
-    ].values[0, ...]
-
-    top_index_matrix = __height_agl_to_nearest_pressure_level(
-        geopotential_matrix_m2_s02=geopotential_matrix_m2_s02,
-        surface_geopotential_matrix_m2_s02=surface_geopotential_matrix_m2_s02,
-        desired_height_m_agl=top_height_m_agl,
-        find_nearest_level_beneath=True
-    )
-
-    # Create three matrices with dimensions (V + 1) x M x N, where V = number
-    # of vertical model levels; M = num rows; N = num columns.  On the first
-    # axis, index 0 is the surface and remaining indices are pressure levels.
-    ftx = forecast_table_xarray
-
-    zonal_wind_matrix_m_s01 = numpy.concatenate([
-        numpy.expand_dims(
-            ftx[model_utils.ZONAL_WIND_10METRES_M_S01_KEY].values[0, ...],
-            axis=0
-        ),
-        ftx[model_utils.ZONAL_WIND_M_S01_KEY].values[0, ...]
-    ], axis=0)
-
-    meridional_wind_matrix_m_s01 = numpy.concatenate([
-        numpy.expand_dims(
-            ftx[model_utils.MERIDIONAL_WIND_10METRES_M_S01_KEY].values[0, ...],
-            axis=0
-        ),
-        ftx[model_utils.MERIDIONAL_WIND_M_S01_KEY].values[0, ...]
-    ], axis=0)
-
-    pressure_matrix_pascals = __get_model_pressure_matrix(
-        forecast_table_xarray=forecast_table_xarray,
-        vertical_axis_first=True
-    )
-    pressure_matrix_pascals = numpy.concatenate([
-        numpy.expand_dims(surface_pressure_matrix_pascals, axis=0),
-        pressure_matrix_pascals
-    ], axis=0)
-
-    # At every horizontal grid point, interpolate the wind to
-    # `top_height_m_agl`.
-    exec_start_time_unix_sec = time.time()
-
-    if do_multiprocessing:
-        start_rows, end_rows = __get_slices_for_multiprocessing(
-            num_grid_rows=geopotential_matrix_m2_s02.shape[1]
-        )
-
-        argument_list = []
-        for s, e in zip(start_rows, end_rows):
-            argument_list.append((
-                zonal_wind_matrix_m_s01[:, s:e, ...],
-                geopotential_matrix_m2_s02[:, s:e, ...],
-                surface_geopotential_matrix_m2_s02[s:e, ...],
-                top_height_m_agl,
-                True
-            ))
-
-        top_zonal_wind_matrix_m_s01 = numpy.full(
-            surface_geopotential_matrix_m2_s02.shape, numpy.nan
-        )
-
-        with Pool() as pool_object:
-            submatrices = pool_object.starmap(
-                __interp_wind_to_height_agl, argument_list
-            )
-
-            for k in range(len(start_rows)):
-                s = start_rows[k]
-                e = end_rows[k]
-                top_zonal_wind_matrix_m_s01[s:e, :] = submatrices[k]
-
-        argument_list = []
-        for s, e in zip(start_rows, end_rows):
-            argument_list.append((
-                meridional_wind_matrix_m_s01[:, s:e, ...],
-                geopotential_matrix_m2_s02[:, s:e, ...],
-                surface_geopotential_matrix_m2_s02[s:e, ...],
-                top_height_m_agl,
-                True
-            ))
-
-        top_meridional_wind_matrix_m_s01 = numpy.full(
-            surface_geopotential_matrix_m2_s02.shape, numpy.nan
-        )
-
-        with Pool() as pool_object:
-            submatrices = pool_object.starmap(
-                __interp_wind_to_height_agl, argument_list
-            )
-
-            for k in range(len(start_rows)):
-                s = start_rows[k]
-                e = end_rows[k]
-                top_meridional_wind_matrix_m_s01[s:e, :] = submatrices[k]
-    else:
-        top_zonal_wind_matrix_m_s01 = __interp_wind_to_height_agl(
-            wind_matrix_m_s01=zonal_wind_matrix_m_s01,
-            geopotential_matrix_m2_s02=geopotential_matrix_m2_s02,
-            surface_geopotential_matrix_m2_s02=
-            surface_geopotential_matrix_m2_s02,
-            target_height_m_agl=top_height_m_agl,
-            use_spline=True
-        )
-
-        top_meridional_wind_matrix_m_s01 = __interp_wind_to_height_agl(
-            wind_matrix_m_s01=meridional_wind_matrix_m_s01,
-            geopotential_matrix_m2_s02=geopotential_matrix_m2_s02,
-            surface_geopotential_matrix_m2_s02=
-            surface_geopotential_matrix_m2_s02,
-            target_height_m_agl=top_height_m_agl,
-            use_spline=True
-        )
-
-    assert not numpy.any(numpy.isnan(top_zonal_wind_matrix_m_s01))
-    assert not numpy.any(numpy.isnan(top_meridional_wind_matrix_m_s01))
-
-    print('Interpolating wind to {0:.1f} m AGL took {1:.1f} seconds.'.format(
-        top_height_m_agl,
-        time.time() - exec_start_time_unix_sec
-    ))
-
-    # Mask out wind values below the surface or above `top_height_m_agl`.
-    num_vertical_levels = zonal_wind_matrix_m_s01.shape[0]
-    vertical_indices = numpy.linspace(
-        0, num_vertical_levels - 1, num=num_vertical_levels, dtype=int
-    )
-    vertical_index_matrix = numpy.expand_dims(vertical_indices, axis=-1)
-    vertical_index_matrix = numpy.expand_dims(vertical_index_matrix, axis=-1)
-
-    top_index_matrix += 1
-    top_index_matrix = numpy.expand_dims(top_index_matrix, axis=0)
-
-    mask_out_matrix = numpy.logical_or(
-        vertical_index_matrix > top_index_matrix,
-        pressure_matrix_pascals - 0.1 >
-        numpy.expand_dims(surface_pressure_matrix_pascals, axis=0)
-    )
-    zonal_wind_matrix_m_s01[mask_out_matrix] = numpy.nan
-    # meridional_wind_matrix_m_s01[mask_out_matrix] = numpy.nan  # Redundant.
-
-    zonal_wind_matrix_m_s01 = numpy.concatenate([
-        zonal_wind_matrix_m_s01,
-        numpy.expand_dims(top_zonal_wind_matrix_m_s01, axis=0)
-    ], axis=0)
-
-    meridional_wind_matrix_m_s01 = numpy.concatenate([
-        meridional_wind_matrix_m_s01,
-        numpy.expand_dims(top_meridional_wind_matrix_m_s01, axis=0)
-    ], axis=0)
-
-    # Now apply the calculation for storm-relative helicity.
-    sr_zonal_wind_matrix_m_s01 = (
-        zonal_wind_matrix_m_s01 -
-        numpy.expand_dims(zonal_storm_motion_matrix_m_s01, axis=0)
-    )
-    sr_meridional_wind_matrix_m_s01 = (
-        meridional_wind_matrix_m_s01 -
-        numpy.expand_dims(meridional_storm_motion_matrix_m_s01, axis=0)
-    )
-
-    num_rows = sr_zonal_wind_matrix_m_s01.shape[1]
-    num_columns = sr_zonal_wind_matrix_m_s01.shape[2]
-    positive_helicity_matrix_m2_s02 = numpy.full(
-        (num_rows, num_columns), numpy.nan
-    )
-    negative_helicity_matrix_m2_s02 = numpy.full(
-        (num_rows, num_columns), numpy.nan
-    )
-
-    for i in range(num_rows):
-        for j in range(num_columns):
-            real_flags = numpy.isfinite(sr_zonal_wind_matrix_m_s01[:, i, j])
-
-            layerwise_helicities_m2_s02 = (
-                sr_zonal_wind_matrix_m_s01[real_flags, i, j][1:] *
-                sr_meridional_wind_matrix_m_s01[real_flags, i, j][:-1] -
-
-                sr_zonal_wind_matrix_m_s01[real_flags, i, j][:-1] *
-                sr_meridional_wind_matrix_m_s01[real_flags, i, j][1:]
-            )
-
-            positive_helicity_matrix_m2_s02[i, j] = numpy.sum(
-                numpy.maximum(layerwise_helicities_m2_s02, 0.)
-            )
-            negative_helicity_matrix_m2_s02 = numpy.sum(
-                numpy.minimum(layerwise_helicities_m2_s02, 0.)
-            )
-
-    return (
-        positive_helicity_matrix_m2_s02,
-        negative_helicity_matrix_m2_s02,
-        surface_pressure_matrix_pascals
-    )
-
-
 def get_storm_relative_helicity(
         forecast_table_xarray, do_multiprocessing, top_heights_m_agl,
         surface_geopotential_matrix_m2_s02,
@@ -2225,10 +2050,15 @@ def get_storm_relative_helicity(
     :param surface_geopotential_matrix_m2_s02: See documentation for
         `get_cape_and_cin`.
     :param surface_pressure_matrix_pascals: Same.
-    :return: positive_helicity_matrix_m2_s02: M-by-N numpy array with integrated
-        positive helicity at each horizontal grid point.
-    :return: negaive_helicity_matrix_m2_s02: M-by-N numpy array with integrated
-        negative helicity at each horizontal grid point.
+    :return: positive_helicity_matrix_m2_s02: L-by-M-by-N numpy array with
+        integrated positive helicity at each horizontal grid point.
+    :return: negative_helicity_matrix_m2_s02: L-by-M-by-N numpy array with
+        integrated negative helicity at each horizontal grid point.
+    :return: zonal_storm_motion_matrix_m_s01: M-by-N numpy array with eastward
+        storm motion (metres per second) at each horizontal grid point.
+    :return: meridional_storm_motion_matrix_m_s01: M-by-N numpy array with
+        northward storm motion (metres per second) at each horizontal grid
+        point.
     :return: surface_pressure_matrix_pascals: M-by-N numpy array of surface
         pressures.
     """
@@ -2452,6 +2282,8 @@ def get_storm_relative_helicity(
     return (
         positive_helicity_matrix_m2_s02,
         negative_helicity_matrix_m2_s02,
+        zonal_storm_motion_matrix_m_s01,
+        meridional_storm_motion_matrix_m_s01,
         surface_pressure_matrix_pascals
     )
 

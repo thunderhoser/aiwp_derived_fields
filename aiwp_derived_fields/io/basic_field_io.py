@@ -90,6 +90,7 @@ def read_file(netcdf_file_name):
         weather variables are also listed at the top of `model_utils.py`.
     """
 
+    error_checking.assert_file_exists(netcdf_file_name)
     forecast_table_xarray = xarray.open_dataset(netcdf_file_name)
 
     valid_time_strings = [

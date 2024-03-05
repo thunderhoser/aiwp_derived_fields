@@ -33,6 +33,14 @@ DERIVED_FIELD_NAMES = [
         derived_field_utils.MERIDIONAL_WIND_SHEAR_NAME.replace('_', '-')
     ),
 
+    derived_field_utils.SCALAR_STORM_MOTION_NAME.replace('_', '-'),
+    derived_field_utils.ZONAL_STORM_MOTION_NAME.replace('_', '-'),
+    derived_field_utils.MERIDIONAL_STORM_MOTION_NAME.replace('_', '-'),
+    '{0:s}_top-height-m-agl=3000.0000'.format(
+        derived_field_utils.HELICITY_NAME.replace('_', '-')
+    ),
+    derived_field_utils.PBL_HEIGHT_NAME.replace('_', '-'),
+
     '{0:s}_ml-depth-metres=FOO'.format(
         derived_field_utils.MIXED_LAYER_CAPE_NAME.replace('_', '-')
     ),
@@ -52,9 +60,13 @@ DERIVED_FIELD_NAMES = [
     '{0:s}_top-pressure-pascals=50000_bottom-pressure-pascals=100000'.format(
         derived_field_utils.MERIDIONAL_WIND_SHEAR_NAME.replace('_', '-')
     ),
+    derived_field_utils.SCALAR_STORM_MOTION_NAME.replace('_', '-'),
+    derived_field_utils.ZONAL_STORM_MOTION_NAME.replace('_', '-'),
+    derived_field_utils.MERIDIONAL_STORM_MOTION_NAME.replace('_', '-'),
+    '{0:s}_top-height-m-agl=0000.0000'.format(
+        derived_field_utils.HELICITY_NAME.replace('_', '-')
+    )
 ]
-
-print(' '.join(['"{0:s}"'.format(d) for d in DERIVED_FIELD_NAMES[:11]]))
 
 FIRST_METADATA_DICT = {
     derived_field_utils.BASIC_FIELD_KEY:
@@ -63,6 +75,7 @@ FIRST_METADATA_DICT = {
         derived_field_utils.MOST_UNSTABLE_PARCEL_SOURCE_STRING,
     derived_field_utils.MIXED_LAYER_DEPTH_KEY: None,
     derived_field_utils.TOP_PRESSURE_KEY: None,
+    derived_field_utils.TOP_HEIGHT_KEY: None,
     derived_field_utils.BOTTOM_PRESSURE_KEY: None
 }
 
@@ -73,6 +86,7 @@ SECOND_METADATA_DICT = {
         derived_field_utils.MOST_UNSTABLE_PARCEL_SOURCE_STRING,
     derived_field_utils.MIXED_LAYER_DEPTH_KEY: None,
     derived_field_utils.TOP_PRESSURE_KEY: None,
+    derived_field_utils.TOP_HEIGHT_KEY: None,
     derived_field_utils.BOTTOM_PRESSURE_KEY: None
 }
 
@@ -83,6 +97,7 @@ THIRD_METADATA_DICT = {
         derived_field_utils.SURFACE_PARCEL_SOURCE_STRING,
     derived_field_utils.MIXED_LAYER_DEPTH_KEY: None,
     derived_field_utils.TOP_PRESSURE_KEY: None,
+    derived_field_utils.TOP_HEIGHT_KEY: None,
     derived_field_utils.BOTTOM_PRESSURE_KEY: None
 }
 
@@ -93,6 +108,7 @@ FOURTH_METADATA_DICT = {
         derived_field_utils.SURFACE_PARCEL_SOURCE_STRING,
     derived_field_utils.MIXED_LAYER_DEPTH_KEY: None,
     derived_field_utils.TOP_PRESSURE_KEY: None,
+    derived_field_utils.TOP_HEIGHT_KEY: None,
     derived_field_utils.BOTTOM_PRESSURE_KEY: None
 }
 
@@ -103,6 +119,7 @@ FIFTH_METADATA_DICT = {
         derived_field_utils.MIXED_LAYER_PARCEL_SOURCE_STRING,
     derived_field_utils.MIXED_LAYER_DEPTH_KEY: 500.,
     derived_field_utils.TOP_PRESSURE_KEY: None,
+    derived_field_utils.TOP_HEIGHT_KEY: None,
     derived_field_utils.BOTTOM_PRESSURE_KEY: None
 }
 
@@ -113,6 +130,7 @@ SIXTH_METADATA_DICT = {
         derived_field_utils.MIXED_LAYER_PARCEL_SOURCE_STRING,
     derived_field_utils.MIXED_LAYER_DEPTH_KEY: 499.9999,
     derived_field_utils.TOP_PRESSURE_KEY: None,
+    derived_field_utils.TOP_HEIGHT_KEY: None,
     derived_field_utils.BOTTOM_PRESSURE_KEY: None
 }
 
@@ -122,6 +140,7 @@ SEVENTH_METADATA_DICT = {
     derived_field_utils.PARCEL_SOURCE_KEY: None,
     derived_field_utils.MIXED_LAYER_DEPTH_KEY: None,
     derived_field_utils.TOP_PRESSURE_KEY: 50000,
+    derived_field_utils.TOP_HEIGHT_KEY: None,
     derived_field_utils.BOTTOM_PRESSURE_KEY: None
 }
 
@@ -131,6 +150,7 @@ EIGHTH_METADATA_DICT = {
     derived_field_utils.PARCEL_SOURCE_KEY: None,
     derived_field_utils.MIXED_LAYER_DEPTH_KEY: None,
     derived_field_utils.TOP_PRESSURE_KEY: 5000,
+    derived_field_utils.TOP_HEIGHT_KEY: None,
     derived_field_utils.BOTTOM_PRESSURE_KEY: None
 }
 
@@ -140,6 +160,7 @@ NINTH_METADATA_DICT = {
     derived_field_utils.PARCEL_SOURCE_KEY: None,
     derived_field_utils.MIXED_LAYER_DEPTH_KEY: None,
     derived_field_utils.TOP_PRESSURE_KEY: 50000,
+    derived_field_utils.TOP_HEIGHT_KEY: None,
     derived_field_utils.BOTTOM_PRESSURE_KEY: 'surface'
 }
 
@@ -149,6 +170,7 @@ TENTH_METADATA_DICT = {
     derived_field_utils.PARCEL_SOURCE_KEY: None,
     derived_field_utils.MIXED_LAYER_DEPTH_KEY: None,
     derived_field_utils.TOP_PRESSURE_KEY: 50000,
+    derived_field_utils.TOP_HEIGHT_KEY: None,
     derived_field_utils.BOTTOM_PRESSURE_KEY: 85000
 }
 
@@ -158,7 +180,58 @@ ELEVENTH_METADATA_DICT = {
     derived_field_utils.PARCEL_SOURCE_KEY: None,
     derived_field_utils.MIXED_LAYER_DEPTH_KEY: None,
     derived_field_utils.TOP_PRESSURE_KEY: 50000,
+    derived_field_utils.TOP_HEIGHT_KEY: None,
     derived_field_utils.BOTTOM_PRESSURE_KEY: 100000
+}
+
+TWELFTH_METADATA_DICT = {
+    derived_field_utils.BASIC_FIELD_KEY:
+        derived_field_utils.SCALAR_STORM_MOTION_NAME,
+    derived_field_utils.PARCEL_SOURCE_KEY: None,
+    derived_field_utils.MIXED_LAYER_DEPTH_KEY: None,
+    derived_field_utils.TOP_PRESSURE_KEY: None,
+    derived_field_utils.TOP_HEIGHT_KEY: None,
+    derived_field_utils.BOTTOM_PRESSURE_KEY: None
+}
+
+THIRTEENTH_METADATA_DICT = {
+    derived_field_utils.BASIC_FIELD_KEY:
+        derived_field_utils.ZONAL_STORM_MOTION_NAME,
+    derived_field_utils.PARCEL_SOURCE_KEY: None,
+    derived_field_utils.MIXED_LAYER_DEPTH_KEY: None,
+    derived_field_utils.TOP_PRESSURE_KEY: None,
+    derived_field_utils.TOP_HEIGHT_KEY: None,
+    derived_field_utils.BOTTOM_PRESSURE_KEY: None
+}
+
+FOURTEENTH_METADATA_DICT = {
+    derived_field_utils.BASIC_FIELD_KEY:
+        derived_field_utils.MERIDIONAL_STORM_MOTION_NAME,
+    derived_field_utils.PARCEL_SOURCE_KEY: None,
+    derived_field_utils.MIXED_LAYER_DEPTH_KEY: None,
+    derived_field_utils.TOP_PRESSURE_KEY: None,
+    derived_field_utils.TOP_HEIGHT_KEY: None,
+    derived_field_utils.BOTTOM_PRESSURE_KEY: None
+}
+
+FIFTEENTH_METADATA_DICT = {
+    derived_field_utils.BASIC_FIELD_KEY:
+        derived_field_utils.HELICITY_NAME,
+    derived_field_utils.PARCEL_SOURCE_KEY: None,
+    derived_field_utils.MIXED_LAYER_DEPTH_KEY: None,
+    derived_field_utils.TOP_PRESSURE_KEY: None,
+    derived_field_utils.TOP_HEIGHT_KEY: 3000.,
+    derived_field_utils.BOTTOM_PRESSURE_KEY: None
+}
+
+SIXTEENTH_METADATA_DICT = {
+    derived_field_utils.BASIC_FIELD_KEY:
+        derived_field_utils.PBL_HEIGHT_NAME,
+    derived_field_utils.PARCEL_SOURCE_KEY: None,
+    derived_field_utils.MIXED_LAYER_DEPTH_KEY: None,
+    derived_field_utils.TOP_PRESSURE_KEY: None,
+    derived_field_utils.TOP_HEIGHT_KEY: None,
+    derived_field_utils.BOTTOM_PRESSURE_KEY: None
 }
 
 METADATA_DICTS = [
@@ -173,6 +246,15 @@ METADATA_DICTS = [
     NINTH_METADATA_DICT,
     TENTH_METADATA_DICT,
     ELEVENTH_METADATA_DICT,
+    TWELFTH_METADATA_DICT,
+    THIRTEENTH_METADATA_DICT,
+    FOURTEENTH_METADATA_DICT,
+    FIFTEENTH_METADATA_DICT,
+    SIXTEENTH_METADATA_DICT,
+    None,
+    None,
+    None,
+    None,
     None,
     None,
     None,
@@ -182,7 +264,8 @@ METADATA_DICTS = [
 ]
 
 IS_FIELD_TO_COMPUTE_FLAGS = numpy.array(
-    [1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1], dtype=bool
+    [1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 1, 1],
+    dtype=bool
 )
 
 
@@ -205,7 +288,10 @@ def _compare_metadata_dicts(first_dict, second_dict):
         if first_dict[this_key] != second_dict[this_key]:
             return False
 
-    float_keys = [derived_field_utils.MIXED_LAYER_DEPTH_KEY]
+    float_keys = [
+        derived_field_utils.MIXED_LAYER_DEPTH_KEY,
+        derived_field_utils.TOP_HEIGHT_KEY
+    ]
 
     for this_key in float_keys:
         if first_dict[this_key] is None and second_dict[this_key] is None:
