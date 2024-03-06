@@ -68,7 +68,7 @@ def find_file(directory_name, model_name, init_time_unix_sec,
     )
 
     # Determine whether the file is actually there.
-    if os.path.isfile(netcdf_file_name):
+    if os.path.isfile(netcdf_file_name) or not raise_error_if_missing:
         return netcdf_file_name
 
     error_string = 'Cannot find file.  Expected at: "{0:s}"'.format(

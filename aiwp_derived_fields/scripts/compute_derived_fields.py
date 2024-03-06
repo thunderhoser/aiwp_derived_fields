@@ -444,8 +444,11 @@ def _run(input_dir_name, model_name, init_time_string, do_multiprocessing,
                 meridional_storm_motion_matrix_m_s01
             )
 
+            is_helicity_done = True
+
     derived_field_names = copy.deepcopy(new_derived_field_names)
     derived_field_matrix = numpy.stack(new_derived_field_matrices, axis=-1)
+    derived_field_matrix = numpy.expand_dims(derived_field_matrix, axis=0)
 
     output_file_name = derived_field_io.find_file(
         directory_name=output_dir_name,

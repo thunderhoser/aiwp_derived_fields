@@ -5,6 +5,7 @@
 
 
 import os
+import numpy
 import xarray
 from gewittergefahr.gg_utils import time_conversion
 from gewittergefahr.gg_utils import number_rounding
@@ -67,7 +68,7 @@ def find_file(directory_name, model_name, init_time_unix_sec,
     )
 
     # Determine whether the file is actually there.
-    if os.path.isfile(netcdf_file_name):
+    if os.path.isfile(netcdf_file_name) or not raise_error_if_missing:
         return netcdf_file_name
 
     error_string = 'Cannot find file.  Expected at: "{0:s}"'.format(
@@ -134,10 +135,11 @@ def write_file(
             derived_field_name=f, is_field_to_compute=False
         )
 
-    expected_dim = (
+    expected_dim = numpy.array([
         len(valid_times_unix_sec), len(latitudes_deg_n),
         len(longitudes_deg_e), len(derived_field_names)
-    )
+    ], dtype=int)
+
     error_checking.assert_is_numpy_array(
         derived_field_matrix, exact_dimensions=expected_dim
     )

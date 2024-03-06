@@ -32,7 +32,7 @@ MIXED_LAYER_CAPE_NAME = 'mixed_layer_cape_j_kg01'
 MIXED_LAYER_CIN_NAME = 'mixed_layer_cin_j_kg01'
 LIFTED_INDEX_NAME = 'lifted_index_kelvins'
 PRECIPITABLE_WATER_NAME = 'precipitable_water_kg_m02'
-SCALAR_WIND_SHEAR_NAME = 'scalar_wind_shear_m_s01'
+SCALAR_WIND_SHEAR_NAME = 'wind_shear_m_s01'
 ZONAL_WIND_SHEAR_NAME = 'zonal_wind_shear_m_s01'
 MERIDIONAL_WIND_SHEAR_NAME = 'meridional_wind_shear_m_s01'
 SCALAR_STORM_MOTION_NAME = 'bunkers_right_mover_storm_motion_m_s01'
@@ -105,43 +105,6 @@ def __apply_args_and_kwargs(function_object, args, kwargs):
     return function_object(*args, **kwargs)
 
 
-def __height_to_geopotential(height_metres):
-    """Converts height to geopotential.
-
-    The input may be a scalar or an array with any shape.
-
-    If the input is surface-relative (i.e., metres above ground level), the
-    output will also be surface-relative (i.e., geopotential with respect to
-    ground level).
-
-    If the input is sea-level-relative (i.e., metres above sea level), the
-    output will also be sea-level-relative (i.e., geopotential with respect to
-    sea level).
-
-    :param height_metres: Input (scalar or array of any shape).
-    :return: geopotential_m2_s02: Geopotential (units of m^2 s^-2).
-    """
-
-    numerator = GRAVITY_M_S02 * EARTH_RADIUS_METRES * height_metres
-    denominator = EARTH_RADIUS_METRES + height_metres
-    return numerator / denominator
-
-
-def __geopotential_to_height(geopotential_m2_s02):
-    """Converts geopotential to height.
-
-    This method is the inverse of `__height_to_geopotential`.
-
-    :param geopotential_m2_s02: See documentation for
-        `__height_to_geopotential`.
-    :return: height_metres: Same.
-    """
-
-    numerator = EARTH_RADIUS_METRES * geopotential_m2_s02
-    denominator = GRAVITY_M_S02 * EARTH_RADIUS_METRES - geopotential_m2_s02
-    return numerator / denominator
-
-
 def __check_for_matching_grids(forecast_table_xarray, aux_data_matrix):
     """Checks for matching grids between xarray table and numpy matrix.
 
@@ -170,7 +133,62 @@ def __check_for_matching_grids(forecast_table_xarray, aux_data_matrix):
     )
 
 
-def __get_slices_for_multiprocessing(num_grid_rows):
+def __pressure_level_to_index(forecast_table_xarray, desired_pressure_pascals):
+    """Returns array index for a given pressure level in the model.
+
+    :param forecast_table_xarray: See documentation for `get_cape_and_cin`.
+    :param desired_pressure_pascals: Desired pressure.
+    :return: pressure_index: Array index (non-negative integer).
+    """
+
+    all_pressures_pascals = numpy.round(
+        HPA_TO_PASCALS *
+        forecast_table_xarray.coords[model_utils.PRESSURE_HPA_DIM].values
+    ).astype(int)
+
+    desired_pressure_pascals = int(numpy.round(desired_pressure_pascals))
+
+    return numpy.where(all_pressures_pascals == desired_pressure_pascals)[0][0]
+
+
+def _height_to_geopotential(height_metres):
+    """Converts height to geopotential.
+
+    The input may be a scalar or an array with any shape.
+
+    If the input is surface-relative (i.e., metres above ground level), the
+    output will also be surface-relative (i.e., geopotential with respect to
+    ground level).
+
+    If the input is sea-level-relative (i.e., metres above sea level), the
+    output will also be sea-level-relative (i.e., geopotential with respect to
+    sea level).
+
+    :param height_metres: Input (scalar or array of any shape).
+    :return: geopotential_m2_s02: Geopotential (units of m^2 s^-2).
+    """
+
+    numerator = GRAVITY_M_S02 * EARTH_RADIUS_METRES * height_metres
+    denominator = EARTH_RADIUS_METRES + height_metres
+    return numerator / denominator
+
+
+def _geopotential_to_height(geopotential_m2_s02):
+    """Converts geopotential to height.
+
+    This method is the inverse of `_height_to_geopotential`.
+
+    :param geopotential_m2_s02: See documentation for
+        `_height_to_geopotential`.
+    :return: height_metres: Same.
+    """
+
+    numerator = EARTH_RADIUS_METRES * geopotential_m2_s02
+    denominator = GRAVITY_M_S02 * EARTH_RADIUS_METRES - geopotential_m2_s02
+    return numerator / denominator
+
+
+def _get_slices_for_multiprocessing(num_grid_rows):
     """Returns slices for multiprocessing.
 
     Each "slice" consists of several grid rows.
@@ -197,7 +215,7 @@ def __get_slices_for_multiprocessing(num_grid_rows):
     return start_rows, end_rows
 
 
-def __get_model_pressure_matrix(forecast_table_xarray, vertical_axis_first):
+def _get_model_pressure_matrix(forecast_table_xarray, vertical_axis_first):
     """Returns matrix of model pressures.
 
     M = number of rows (latitudes) in grid
@@ -245,7 +263,7 @@ def __get_model_pressure_matrix(forecast_table_xarray, vertical_axis_first):
     return pressure_matrix_pascals
 
 
-def __height_agl_to_nearest_pressure_level(
+def _height_agl_to_nearest_pressure_level(
         geopotential_matrix_m2_s02, surface_geopotential_matrix_m2_s02,
         desired_height_m_agl, find_nearest_level_beneath):
     """At every horizontal grid point, finds nearest p-level to a given height.
@@ -269,7 +287,7 @@ def __height_agl_to_nearest_pressure_level(
         the desired ground-relative height.
     """
 
-    desired_sfc_relative_geoptl_m2_s02 = __height_to_geopotential(
+    desired_sfc_relative_geoptl_m2_s02 = _height_to_geopotential(
         desired_height_m_agl
     )
     desired_geopotential_matrix_m2_s02 = (
@@ -300,7 +318,7 @@ def __height_agl_to_nearest_pressure_level(
     )
 
 
-def __get_mean_wind(
+def _get_mean_wind(
         zonal_wind_matrix_m_s01, meridional_wind_matrix_m_s01,
         bottom_index_matrix, top_index_matrix, pressure_weighted,
         pressure_matrix_pascals, surface_pressure_matrix_pascals):
@@ -401,7 +419,7 @@ def __get_mean_wind(
     return mean_zonal_wind_matrix_m_s01, mean_meridional_wind_matrix_m_s01
 
 
-def __get_pbl_height(
+def _get_pbl_height(
         theta_v_matrix_kelvins, geopotential_matrix_m2_s02,
         theta_v_deviation_threshold_kelvins=0.5):
     """At every horizontal grid point, computes PBL height.
@@ -451,11 +469,11 @@ def __get_pbl_height(
 
     # At any horizontal grid point where theta_v does not exceed the threshold
     # at any vertical level, this matrix will have a False value.
-    bad_flag_matrix = exceedance_flag_matrix[
+    bad_flag_matrix = numpy.invert(exceedance_flag_matrix[
         top_index_matrix,
         numpy.arange(top_index_matrix.shape[0])[:, None],
         numpy.arange(top_index_matrix.shape[1])
-    ]
+    ])
 
     # Create 2-by-M-by-N matrix of theta_v values, where the two vertical levels
     # sandwich the PBL top.
@@ -534,7 +552,7 @@ def __get_pbl_height(
     pbl_top_sfc_relative_geoptl_matrix_m2_s02 = (
         pbl_top_geopotential_matrix_m2_s02 - geopotential_matrix_m2_s02[0, ...]
     )
-    pbl_height_matrix_m_agl = __geopotential_to_height(
+    pbl_height_matrix_m_agl = _geopotential_to_height(
         pbl_top_sfc_relative_geoptl_matrix_m2_s02
     )
 
@@ -544,9 +562,9 @@ def __get_pbl_height(
     return pbl_height_matrix_m_agl
 
 
-def __interp_pressure_to_surface(
+def _interp_pressure_to_surface(
         log10_pressure_matrix_pascals, geopotential_matrix_m2_s02,
-        surface_geopotential_matrix_m2_s02, use_spline):
+        surface_geopotential_matrix_m2_s02, use_spline, test_mode=False):
     """At every horizontal grid point, interpolates pressure to surface.
 
     M = number of rows (latitudes) in grid
@@ -560,6 +578,7 @@ def __interp_pressure_to_surface(
     :param surface_geopotential_matrix_m2_s02: M-by-N numpy array of surface
         geopotentials.
     :param use_spline: Boolean flag.
+    :param test_mode: Leave this alone.
     :return: surface_pressure_matrix_pascals: M-by-N numpy array of surface
         pressures.
     """
@@ -603,10 +622,13 @@ def __interp_pressure_to_surface(
                 surface_geopotential_matrix_m2_s02[i, j]
             )
 
+    if test_mode:
+        return log10_surface_pressure_matrix_pascals
+
     return 10 ** log10_surface_pressure_matrix_pascals
 
 
-def __interp_wind_to_heights_agl(
+def _interp_wind_to_heights_agl(
         wind_matrix_m_s01, geopotential_matrix_m2_s02,
         surface_geopotential_matrix_m2_s02, target_heights_m_agl, use_spline):
     """At every horizontal grid pt, interpolates wind to ground-relative hgts.
@@ -631,7 +653,7 @@ def __interp_wind_to_heights_agl(
         speeds.
     """
 
-    target_sfc_relative_geoptls_m2_s02 = __height_to_geopotential(
+    target_sfc_relative_geoptls_m2_s02 = _height_to_geopotential(
         target_heights_m_agl
     )
     target_geopotential_matrix_m2_s02 = numpy.stack([
@@ -681,7 +703,7 @@ def __interp_wind_to_heights_agl(
     return interp_wind_matrix_m_s01
 
 
-def __interp_humidity_to_surface(
+def _interp_humidity_to_surface(
         log10_pressure_matrix_pascals, spec_humidity_matrix_kg_kg01,
         log10_surface_pressure_matrix_pascals, use_spline=True):
     """At every horizontal grid point, interpolates specific humidity to sfc.
@@ -700,6 +722,10 @@ def __interp_humidity_to_surface(
     :return: surface_spec_humidity_matrix_kg_kg01: M-by-N numpy array of
         surface specific humidities.
     """
+
+    # TODO(thunderhoser): Didn't write unit tests for this method, since it's so
+    # similar to _interp_pressure_to_surface and _interp_wind_to_heights_agl,
+    # for which I did write unit tests.
 
     surface_spec_humidity_matrix_kg_kg01 = numpy.full(
         log10_surface_pressure_matrix_pascals.shape, numpy.nan
@@ -734,8 +760,8 @@ def __interp_humidity_to_surface(
     return numpy.maximum(surface_spec_humidity_matrix_kg_kg01, 0.)
 
 
-def __integrate_to_precipitable_water(
-        pressure_matrix_pascals, spec_humidity_matrix_kg_kg01):
+def _integrate_to_precipitable_water(
+        pressure_matrix_pascals, spec_humidity_matrix_kg_kg01, test_mode=False):
     """At every horizontal grid point, integrates to get precipitable water.
 
     M = number of rows (latitudes) in grid
@@ -745,6 +771,7 @@ def __integrate_to_precipitable_water(
     :param pressure_matrix_pascals: V-by-M-by-N numpy array of pressure values.
     :param spec_humidity_matrix_kg_kg01: V-by-M-by-N numpy array of specific
         humidities.
+    :param test_mode: Leave this alone.
     :return: precipitable_water_matrix_kg_m02: M-by-N numpy array of
         precipitable-water values.
     """
@@ -767,6 +794,21 @@ def __integrate_to_precipitable_water(
             if len(subinds) < 2:
                 continue
 
+            if test_mode:
+                these_humid_kg_kg01 = (
+                    spec_humidity_matrix_kg_kg01[:, i, j][inds][subinds]
+                )
+                these_pressures_pascals = (
+                    pressure_matrix_pascals[:, i, j][inds][subinds]
+                )
+                precipitable_water_matrix_kg_m02[i, j] = -numpy.sum(
+                    0.5 *
+                    (these_humid_kg_kg01[:-1] + these_humid_kg_kg01[1:]) *
+                    (these_pressures_pascals[:-1] - these_pressures_pascals[1:])
+                )
+
+                continue
+
             try:
                 precipitable_water_matrix_kg_m02[i, j] = simpson(
                     y=spec_humidity_matrix_kg_kg01[:, i, j][inds][subinds],
@@ -784,24 +826,6 @@ def __integrate_to_precipitable_water(
 
     coefficient = -METRES_TO_MM / (WATER_DENSITY_KG_M03 * GRAVITY_M_S02)
     return coefficient * precipitable_water_matrix_kg_m02
-
-
-def _pressure_level_to_index(forecast_table_xarray, desired_pressure_pascals):
-    """Returns array index for a given pressure level in the model.
-
-    :param forecast_table_xarray: See documentation for `get_cape_and_cin`.
-    :param desired_pressure_pascals: Desired pressure.
-    :return: pressure_index: Array index (non-negative integer).
-    """
-
-    all_pressures_pascals = numpy.round(
-        HPA_TO_PASCALS *
-        forecast_table_xarray.coords[model_utils.PRESSURE_HPA_DIM].values
-    ).astype(int)
-
-    desired_pressure_pascals = int(numpy.round(desired_pressure_pascals))
-
-    return numpy.where(all_pressures_pascals == desired_pressure_pascals)[0][0]
 
 
 def _estimate_surface_dewpoint(
@@ -827,7 +851,10 @@ def _estimate_surface_dewpoint(
         surface dewpoints.
     """
 
-    pressure_matrix_pascals = __get_model_pressure_matrix(
+    # TODO(thunderhoser): Didn't write unit tests for this method, since it's a
+    # thin wrapper for _interp_humidity_to_surface.
+
+    pressure_matrix_pascals = _get_model_pressure_matrix(
         forecast_table_xarray=forecast_table_xarray,
         vertical_axis_first=True
     )
@@ -838,7 +865,7 @@ def _estimate_surface_dewpoint(
     exec_start_time_unix_sec = time.time()
 
     if do_multiprocessing:
-        start_rows, end_rows = __get_slices_for_multiprocessing(
+        start_rows, end_rows = _get_slices_for_multiprocessing(
             num_grid_rows=pressure_matrix_pascals.shape[1]
         )
 
@@ -858,7 +885,7 @@ def _estimate_surface_dewpoint(
 
         with Pool() as pool_object:
             submatrices = pool_object.starmap(
-                __interp_humidity_to_surface, argument_list
+                _interp_humidity_to_surface, argument_list
             )
 
             for k in range(len(start_rows)):
@@ -868,7 +895,7 @@ def _estimate_surface_dewpoint(
 
         assert not numpy.any(numpy.isnan(surface_spec_humidity_matrix_kg_kg01))
     else:
-        surface_spec_humidity_matrix_kg_kg01 = __interp_humidity_to_surface(
+        surface_spec_humidity_matrix_kg_kg01 = _interp_humidity_to_surface(
             log10_pressure_matrix_pascals=numpy.log10(pressure_matrix_pascals),
             spec_humidity_matrix_kg_kg01=spec_humidity_matrix_kg_kg01,
             log10_surface_pressure_matrix_pascals=numpy.log10(
@@ -894,7 +921,7 @@ def _estimate_surface_dewpoint(
 
 def _estimate_surface_pressure(
         forecast_table_xarray, surface_geopotential_matrix_m2_s02,
-        do_multiprocessing, use_spline=True):
+        do_multiprocessing, use_spline=True, test_mode=False):
     """Estimates surface pressure at every grid point.
 
     M = number of rows (latitudes) in grid
@@ -908,13 +935,14 @@ def _estimate_surface_pressure(
     :param use_spline: Boolean flag.  If True, will use spline interpolation
         with degree = 1.  If False, will use straight-up linear interpolation.
         Spline interpolation is faster in scipy!
+    :param test_mode: Leave this alone.
     :return: surface_pressure_matrix_pascals: M-by-N numpy array of estimated
         surface pressures.
     """
 
     # Create pressure matrix with dimensions V x M x N, where V = number of
     # model levels.
-    pressure_matrix_pascals = __get_model_pressure_matrix(
+    pressure_matrix_pascals = _get_model_pressure_matrix(
         forecast_table_xarray=forecast_table_xarray,
         vertical_axis_first=True
     )
@@ -948,19 +976,28 @@ def _estimate_surface_pressure(
     exec_start_time_unix_sec = time.time()
 
     if do_multiprocessing:
-        start_rows, end_rows = __get_slices_for_multiprocessing(
+        start_rows, end_rows = _get_slices_for_multiprocessing(
             num_grid_rows=pressure_matrix_pascals.shape[1]
         )
 
         argument_list = []
 
         for s, e in zip(start_rows, end_rows):
-            argument_list.append((
-                numpy.log10(pressure_matrix_pascals[:, s:e, :]),
-                geopotential_matrix_m2_s02[:, s:e, :],
-                surface_geopotential_matrix_m2_s02[s:e, :],
-                use_spline
-            ))
+            if test_mode:
+                argument_list.append((
+                    pressure_matrix_pascals[:, s:e, :],
+                    geopotential_matrix_m2_s02[:, s:e, :],
+                    surface_geopotential_matrix_m2_s02[s:e, :],
+                    use_spline,
+                    True
+                ))
+            else:
+                argument_list.append((
+                    numpy.log10(pressure_matrix_pascals[:, s:e, :]),
+                    geopotential_matrix_m2_s02[:, s:e, :],
+                    surface_geopotential_matrix_m2_s02[s:e, :],
+                    use_spline
+                ))
 
         surface_pressure_matrix_pascals = numpy.full(
             pressure_matrix_pascals.shape[1:], numpy.nan
@@ -968,7 +1005,7 @@ def _estimate_surface_pressure(
 
         with Pool() as pool_object:
             submatrices = pool_object.starmap(
-                __interp_pressure_to_surface, argument_list
+                _interp_pressure_to_surface, argument_list
             )
 
             for k in range(len(start_rows)):
@@ -978,13 +1015,24 @@ def _estimate_surface_pressure(
 
         assert not numpy.any(numpy.isnan(surface_pressure_matrix_pascals))
     else:
-        surface_pressure_matrix_pascals = __interp_pressure_to_surface(
-            log10_pressure_matrix_pascals=numpy.log10(pressure_matrix_pascals),
-            geopotential_matrix_m2_s02=geopotential_matrix_m2_s02,
-            surface_geopotential_matrix_m2_s02=
-            surface_geopotential_matrix_m2_s02,
-            use_spline=use_spline
-        )
+        if test_mode:
+            surface_pressure_matrix_pascals = _interp_pressure_to_surface(
+                log10_pressure_matrix_pascals=pressure_matrix_pascals,
+                geopotential_matrix_m2_s02=geopotential_matrix_m2_s02,
+                surface_geopotential_matrix_m2_s02=
+                surface_geopotential_matrix_m2_s02,
+                use_spline=use_spline,
+                test_mode=True
+            )
+        else:
+            surface_pressure_matrix_pascals = _interp_pressure_to_surface(
+                log10_pressure_matrix_pascals=
+                numpy.log10(pressure_matrix_pascals),
+                geopotential_matrix_m2_s02=geopotential_matrix_m2_s02,
+                surface_geopotential_matrix_m2_s02=
+                surface_geopotential_matrix_m2_s02,
+                use_spline=use_spline
+            )
 
     print('Estimating surface pressure took {0:.1f} seconds.'.format(
         time.time() - exec_start_time_unix_sec
@@ -1281,7 +1329,7 @@ def get_cape_and_cin(
     )
 
     # Convert specific humidity to dewpoint.
-    pressure_matrix_pascals = __get_model_pressure_matrix(
+    pressure_matrix_pascals = _get_model_pressure_matrix(
         forecast_table_xarray=forecast_table_xarray,
         vertical_axis_first=False
     )
@@ -1313,7 +1361,7 @@ def get_cape_and_cin(
     exec_start_time_unix_sec = time.time()
 
     if do_multiprocessing:
-        start_rows, end_rows = __get_slices_for_multiprocessing(
+        start_rows, end_rows = _get_slices_for_multiprocessing(
             num_grid_rows=surface_temp_matrix_kelvins.shape[0]
         )
 
@@ -1433,9 +1481,6 @@ def get_lifted_index(
         pressures.
     """
 
-    # TODO(thunderhoser): I might want to be careful about lifting to pressure
-    # levels below the surface.
-
     # TODO(thunderhoser): Still need to get fancy with time dimension.
 
     # Check input args.
@@ -1452,7 +1497,7 @@ def get_lifted_index(
 
     error_checking.assert_is_boolean(do_multiprocessing)
 
-    p_index = _pressure_level_to_index(
+    p_index = __pressure_level_to_index(
         forecast_table_xarray=forecast_table_xarray,
         desired_pressure_pascals=final_pressure_pascals
     )
@@ -1480,7 +1525,7 @@ def get_lifted_index(
     exec_start_time_unix_sec = time.time()
 
     if do_multiprocessing_for_sharppy:
-        start_rows, end_rows = __get_slices_for_multiprocessing(
+        start_rows, end_rows = _get_slices_for_multiprocessing(
             num_grid_rows=surface_temp_matrix_kelvins.shape[0]
         )
 
@@ -1546,6 +1591,8 @@ def get_lifted_index(
         )
     )
 
+    # Mask out horizontal grid points where the parcel is "lifted" to a level
+    # below the surface.
     bad_layer_flag_matrix = (
         final_pressure_matrix_pascals >= surface_pressure_matrix_pascals
     )
@@ -1619,8 +1666,9 @@ def get_precipitable_water(
         dewpoints.
     """
 
-    # TODO(thunderhoser): Might want a condition that returns PW if PW is
-    # already in model variables.
+    # One of the AIWP models (I can't remember which) already has precipitable
+    # water as an output variable, but I want to allow for options, specifically
+    # the layer top via `top_pressure_pascals`.
 
     # Check input args.
     if surface_geopotential_matrix_m2_s02 is not None:
@@ -1639,7 +1687,7 @@ def get_precipitable_water(
             aux_data_matrix=surface_dewpoint_matrix_kelvins
         )
 
-    top_p_index = 1 + _pressure_level_to_index(
+    top_p_index = 1 + __pressure_level_to_index(
         forecast_table_xarray=forecast_table_xarray,
         desired_pressure_pascals=top_pressure_pascals
     )
@@ -1676,13 +1724,13 @@ def get_precipitable_water(
     )
 
     # Extract pressure and specific humidity at levels above the surface.
-    pressure_matrix_pascals = __get_model_pressure_matrix(
+    pressure_matrix_pascals = _get_model_pressure_matrix(
         forecast_table_xarray=forecast_table_xarray,
         vertical_axis_first=True
     )
     pressure_matrix_pascals = pressure_matrix_pascals[:top_p_index, ...]
 
-    spec_humidity_matrix_kg_kg01 = forecast_table_xarray[
+    spec_humidity_matrix_kg_kg01 = 0. + forecast_table_xarray[
         model_utils.SPECIFIC_HUMIDITY_KG_KG01_KEY
     ].values[0, :top_p_index, ...]
 
@@ -1711,7 +1759,7 @@ def get_precipitable_water(
     exec_start_time_unix_sec = time.time()
 
     if do_multiprocessing:
-        start_rows, end_rows = __get_slices_for_multiprocessing(
+        start_rows, end_rows = _get_slices_for_multiprocessing(
             num_grid_rows=pressure_matrix_pascals.shape[1]
         )
 
@@ -1729,7 +1777,7 @@ def get_precipitable_water(
 
         with Pool() as pool_object:
             submatrices = pool_object.starmap(
-                __integrate_to_precipitable_water, argument_list
+                _integrate_to_precipitable_water, argument_list
             )
 
             for k in range(len(start_rows)):
@@ -1737,7 +1785,7 @@ def get_precipitable_water(
                 e = end_rows[k]
                 precipitable_water_matrix_kg_m02[s:e, :] = submatrices[k]
     else:
-        precipitable_water_matrix_kg_m02 = __integrate_to_precipitable_water(
+        precipitable_water_matrix_kg_m02 = _integrate_to_precipitable_water(
             pressure_matrix_pascals=pressure_matrix_pascals,
             spec_humidity_matrix_kg_kg01=spec_humidity_matrix_kg_kg01
         )
@@ -1795,7 +1843,7 @@ def get_wind_shear(
 
     error_checking.assert_is_boolean(do_multiprocessing)
 
-    top_index = _pressure_level_to_index(
+    top_index = __pressure_level_to_index(
         forecast_table_xarray=forecast_table_xarray,
         desired_pressure_pascals=top_pressure_pascals
     )
@@ -1807,7 +1855,7 @@ def get_wind_shear(
         bottom_index = None
         is_bottom_surface = True
     else:
-        bottom_index = _pressure_level_to_index(
+        bottom_index = __pressure_level_to_index(
             forecast_table_xarray=forecast_table_xarray,
             desired_pressure_pascals=bottom_pressure_pascals
         )
@@ -1825,16 +1873,16 @@ def get_wind_shear(
 
     # Do actual stuff.
     if is_bottom_surface:
-        bottom_zonal_wind_matrix_m_s01 = forecast_table_xarray[
+        bottom_zonal_wind_matrix_m_s01 = 0. + forecast_table_xarray[
             model_utils.ZONAL_WIND_10METRES_M_S01_KEY
         ].values[0, ...]
 
-        bottom_merid_wind_matrix_m_s01 = forecast_table_xarray[
+        bottom_merid_wind_matrix_m_s01 = 0. + forecast_table_xarray[
             model_utils.MERIDIONAL_WIND_10METRES_M_S01_KEY
         ].values[0, ...]
 
         # Mask out locations where layer top is below surface.
-        pressure_matrix_pascals = __get_model_pressure_matrix(
+        pressure_matrix_pascals = _get_model_pressure_matrix(
             forecast_table_xarray=forecast_table_xarray,
             vertical_axis_first=True
         )
@@ -1927,7 +1975,7 @@ def get_bunkers_storm_motion(
         model_utils.GEOPOTENTIAL_M2_S02_KEY
     ].values[0, ...]
 
-    top_index_matrix = __height_agl_to_nearest_pressure_level(
+    top_index_matrix = _height_agl_to_nearest_pressure_level(
         geopotential_matrix_m2_s02=geopotential_matrix_m2_s02,
         surface_geopotential_matrix_m2_s02=surface_geopotential_matrix_m2_s02,
         desired_height_m_agl=6000.,
@@ -1935,7 +1983,7 @@ def get_bunkers_storm_motion(
     )
 
     # At each horizontal grid point, get 0--6-km mean wind.  The first three
-    # input matrices to __get_mean_wind -- whose names do not start with
+    # input matrices to _get_mean_wind -- whose names do not start with
     # "surface" -- have dimensions (V + 1) x M x N, where V is the number of
     # vertical model levels and M is the number of rows and N is the number of
     # columns.  On the first axis, index 0 is the surface and remaining indices
@@ -1958,7 +2006,7 @@ def get_bunkers_storm_motion(
         ftx[model_utils.MERIDIONAL_WIND_M_S01_KEY].values[0, ...]
     ], axis=0)
 
-    pressure_matrix_pascals = __get_model_pressure_matrix(
+    pressure_matrix_pascals = _get_model_pressure_matrix(
         forecast_table_xarray=forecast_table_xarray,
         vertical_axis_first=True
     )
@@ -1971,7 +2019,7 @@ def get_bunkers_storm_motion(
 
     (
         mean_zonal_wind_matrix_m_s01, mean_meridional_wind_matrix_m_s01
-    ) = __get_mean_wind(
+    ) = _get_mean_wind(
         zonal_wind_matrix_m_s01=zonal_wind_matrix_m_s01,
         meridional_wind_matrix_m_s01=meridional_wind_matrix_m_s01,
         bottom_index_matrix=numpy.full(
@@ -2116,6 +2164,11 @@ def get_storm_relative_helicity(
         ftx[model_utils.MERIDIONAL_WIND_M_S01_KEY].values[0, ...]
     ], axis=0)
 
+    geopotential_matrix_m2_s02 = numpy.concatenate([
+        numpy.expand_dims(surface_geopotential_matrix_m2_s02, axis=0),
+        ftx[model_utils.GEOPOTENTIAL_M2_S02_KEY].values[0, ...]
+    ], axis=0)
+
     # Determine target heights, to which wind will be interpolated.
     num_interp_heights = int(numpy.ceil(
         float(numpy.max(top_heights_m_agl)) / HEIGHT_SPACING_FOR_HELICITY_METRES
@@ -2138,14 +2191,10 @@ def get_storm_relative_helicity(
 
     # At every horizontal grid point, interpolate the wind to all target
     # heights.
-    geopotential_matrix_m2_s02 = forecast_table_xarray[
-        model_utils.GEOPOTENTIAL_M2_S02_KEY
-    ].values[0, ...]
-
     exec_start_time_unix_sec = time.time()
 
     if do_multiprocessing:
-        start_rows, end_rows = __get_slices_for_multiprocessing(
+        start_rows, end_rows = _get_slices_for_multiprocessing(
             num_grid_rows=geopotential_matrix_m2_s02.shape[1]
         )
 
@@ -2166,7 +2215,7 @@ def get_storm_relative_helicity(
 
         with Pool() as pool_object:
             submatrices = pool_object.starmap(
-                __interp_wind_to_heights_agl, argument_list
+                _interp_wind_to_heights_agl, argument_list
             )
 
             for k in range(len(start_rows)):
@@ -2191,7 +2240,7 @@ def get_storm_relative_helicity(
 
         with Pool() as pool_object:
             submatrices = pool_object.starmap(
-                __interp_wind_to_heights_agl, argument_list
+                _interp_wind_to_heights_agl, argument_list
             )
 
             for k in range(len(start_rows)):
@@ -2199,7 +2248,7 @@ def get_storm_relative_helicity(
                 e = end_rows[k]
                 interp_meridional_wind_matrix_m_s01[:, s:e, :] = submatrices[k]
     else:
-        interp_zonal_wind_matrix_m_s01 = __interp_wind_to_heights_agl(
+        interp_zonal_wind_matrix_m_s01 = _interp_wind_to_heights_agl(
             wind_matrix_m_s01=zonal_wind_matrix_m_s01,
             geopotential_matrix_m2_s02=geopotential_matrix_m2_s02,
             surface_geopotential_matrix_m2_s02=
@@ -2208,7 +2257,7 @@ def get_storm_relative_helicity(
             use_spline=True
         )
 
-        interp_meridional_wind_matrix_m_s01 = __interp_wind_to_heights_agl(
+        interp_meridional_wind_matrix_m_s01 = _interp_wind_to_heights_agl(
             wind_matrix_m_s01=meridional_wind_matrix_m_s01,
             geopotential_matrix_m2_s02=geopotential_matrix_m2_s02,
             surface_geopotential_matrix_m2_s02=
@@ -2394,7 +2443,7 @@ def get_pbl_height(
         )
     )
 
-    aloft_pressure_matrix_pascals = __get_model_pressure_matrix(
+    aloft_pressure_matrix_pascals = _get_model_pressure_matrix(
         forecast_table_xarray=forecast_table_xarray,
         vertical_axis_first=True
     )
@@ -2438,7 +2487,7 @@ def get_pbl_height(
         aloft_geopotential_matrix_m2_s02
     ], axis=0)
 
-    pbl_height_matrix_m_agl = __get_pbl_height(
+    pbl_height_matrix_m_agl = _get_pbl_height(
         theta_v_matrix_kelvins=full_theta_v_matrix_kelvins,
         geopotential_matrix_m2_s02=full_geopotential_matrix_m2_s02,
         theta_v_deviation_threshold_kelvins=0.5
