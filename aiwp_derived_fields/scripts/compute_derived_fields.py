@@ -72,88 +72,34 @@ INPUT_ARG_PARSER.add_argument(
 )
 
 
-def _run(input_dir_name, model_name, init_time_string, do_multiprocessing,
-         derived_field_names, output_dir_name):
-    """Computes derived fields.
+def _compute_derived_fields_1time(
+        forecast_table_xarray, derived_field_names, metadata_dict_by_field,
+        do_multiprocessing, computing_helicity,
+        surface_geopotential_matrix_m2_s02):
+    """Computes derived fields at one valid time (forecast hour).
 
-    This is effectively the main method.
+    f = number of derived fields to compute
+    M = number of rows (latitudes) in grid
+    N = number of columns (longitudes) in grid
+    F = number of derived fields actually computed (might be greater than f)
 
-    :param input_dir_name: See documentation at top of script.
-    :param model_name: Same.
-    :param init_time_string: Same.
-    :param do_multiprocessing: Same.
-    :param derived_field_names: Same.
-    :param output_dir_name: Same.
+    :param forecast_table_xarray: xarray table in format returned by
+        `basic_field_io.read_file`, with only one valid time.
+    :param derived_field_names: length-f list with names of derived fields.
+        Each list item must be a string accepted by
+        `derived_field_utils.parse_field_name`.
+    :param metadata_dict_by_field: length-f list with metadata for derived
+        fields.  Each list item must be a dictionary accepted by
+        `derived_field_utils.create_field_name`.
+    :param do_multiprocessing: See documentation at top of this script.
+    :param computing_helicity: Boolean flag.  If True, at least one of the
+        derived fields is storm-relative helicity.
+    :param surface_geopotential_matrix_m2_s02: M-by-N numpy array of surface
+        geopotentials (units of m^2 s^-2).
+    :return: new_derived_field_names: length-F list of field names.
+    :return: new_derived_field_matrix: M-by-N-by-F numpy array of data values.
     """
 
-    # Check/process input args.
-    metadata_dict_by_field = [
-        derived_field_utils.parse_field_name(
-            derived_field_name=f, is_field_to_compute=True
-        )
-        for f in derived_field_names
-    ]
-    derived_field_names = [
-        derived_field_utils.create_field_name(m)
-        for m in metadata_dict_by_field
-    ]
-
-    _, unique_indices = numpy.unique(
-        numpy.array(derived_field_names), return_index=True
-    )
-    derived_field_names = [derived_field_names[k] for k in unique_indices]
-    metadata_dict_by_field = [metadata_dict_by_field[k] for k in unique_indices]
-
-    computing_helicity = any([
-        md[derived_field_utils.BASIC_FIELD_KEY] ==
-        derived_field_utils.HELICITY_NAME
-        for md in metadata_dict_by_field
-    ])
-    computing_storm_motion = any([
-        md[derived_field_utils.BASIC_FIELD_KEY] ==
-        derived_field_utils.SCALAR_STORM_MOTION_NAME
-        for md in metadata_dict_by_field
-    ])
-
-    if computing_helicity and not computing_storm_motion:
-        this_metadata_dict = {
-            derived_field_utils.BASIC_FIELD_KEY:
-                derived_field_utils.SCALAR_STORM_MOTION_NAME,
-            derived_field_utils.PARCEL_SOURCE_KEY: None,
-            derived_field_utils.MIXED_LAYER_DEPTH_KEY: None,
-            derived_field_utils.TOP_PRESSURE_KEY: None,
-            derived_field_utils.TOP_HEIGHT_KEY: None,
-            derived_field_utils.BOTTOM_PRESSURE_KEY: None
-        }
-        this_derived_field_name = derived_field_utils.create_field_name(
-            this_metadata_dict
-        )
-
-        metadata_dict_by_field.append(this_metadata_dict)
-        derived_field_names.append(this_derived_field_name)
-
-    file_system_utils.mkdir_recursive_if_necessary(
-        directory_name=output_dir_name
-    )
-
-    # Read inputs (basic weather fields).
-    input_file_name = basic_field_io.find_file(
-        directory_name=input_dir_name,
-        model_name=model_name,
-        init_time_unix_sec=time_conversion.string_to_unix_sec(
-            init_time_string, TIME_FORMAT
-        ),
-        raise_error_if_missing=True
-    )
-
-    print('Reading data from: "{0:s}"...'.format(input_file_name))
-    forecast_table_xarray = basic_field_io.read_file(input_file_name)
-
-    # Read surface-geopotential field.  This might be needed to compute some
-    # derived fields.
-    surface_geopotential_matrix_m2_s02 = (
-        era5_constants_io.read_surface_geopotential(forecast_table_xarray)
-    )
     surface_pressure_matrix_pascals = None
     surface_dewpoint_matrix_kelvins = None
 
@@ -446,9 +392,121 @@ def _run(input_dir_name, model_name, init_time_string, do_multiprocessing,
 
             is_helicity_done = True
 
-    derived_field_names = copy.deepcopy(new_derived_field_names)
-    derived_field_matrix = numpy.stack(new_derived_field_matrices, axis=-1)
-    derived_field_matrix = numpy.expand_dims(derived_field_matrix, axis=0)
+    new_derived_field_matrix = numpy.stack(new_derived_field_matrices, axis=-1)
+    return new_derived_field_names, new_derived_field_matrix
+
+
+def _run(input_dir_name, model_name, init_time_string, do_multiprocessing,
+         derived_field_names, output_dir_name):
+    """Computes derived fields.
+
+    This is effectively the main method.
+
+    :param input_dir_name: See documentation at top of script.
+    :param model_name: Same.
+    :param init_time_string: Same.
+    :param do_multiprocessing: Same.
+    :param derived_field_names: Same.
+    :param output_dir_name: Same.
+    """
+
+    # Check/process input args.
+    metadata_dict_by_field = [
+        derived_field_utils.parse_field_name(
+            derived_field_name=f, is_field_to_compute=True
+        )
+        for f in derived_field_names
+    ]
+    derived_field_names = [
+        derived_field_utils.create_field_name(m)
+        for m in metadata_dict_by_field
+    ]
+
+    _, unique_indices = numpy.unique(
+        numpy.array(derived_field_names), return_index=True
+    )
+    derived_field_names = [derived_field_names[k] for k in unique_indices]
+    metadata_dict_by_field = [metadata_dict_by_field[k] for k in unique_indices]
+
+    computing_helicity = any([
+        md[derived_field_utils.BASIC_FIELD_KEY] ==
+        derived_field_utils.HELICITY_NAME
+        for md in metadata_dict_by_field
+    ])
+    computing_storm_motion = any([
+        md[derived_field_utils.BASIC_FIELD_KEY] ==
+        derived_field_utils.SCALAR_STORM_MOTION_NAME
+        for md in metadata_dict_by_field
+    ])
+
+    if computing_helicity and not computing_storm_motion:
+        this_metadata_dict = {
+            derived_field_utils.BASIC_FIELD_KEY:
+                derived_field_utils.SCALAR_STORM_MOTION_NAME,
+            derived_field_utils.PARCEL_SOURCE_KEY: None,
+            derived_field_utils.MIXED_LAYER_DEPTH_KEY: None,
+            derived_field_utils.TOP_PRESSURE_KEY: None,
+            derived_field_utils.TOP_HEIGHT_KEY: None,
+            derived_field_utils.BOTTOM_PRESSURE_KEY: None
+        }
+        this_derived_field_name = derived_field_utils.create_field_name(
+            this_metadata_dict
+        )
+
+        metadata_dict_by_field.append(this_metadata_dict)
+        derived_field_names.append(this_derived_field_name)
+
+    file_system_utils.mkdir_recursive_if_necessary(
+        directory_name=output_dir_name
+    )
+
+    # Read inputs (basic weather fields).
+    input_file_name = basic_field_io.find_file(
+        directory_name=input_dir_name,
+        model_name=model_name,
+        init_time_unix_sec=time_conversion.string_to_unix_sec(
+            init_time_string, TIME_FORMAT
+        ),
+        raise_error_if_missing=True
+    )
+
+    print('Reading data from: "{0:s}"...'.format(input_file_name))
+    forecast_table_xarray = basic_field_io.read_file(input_file_name)
+
+    # Read surface-geopotential field.  This might be needed to compute some
+    # derived fields.
+    surface_geopotential_matrix_m2_s02 = (
+        era5_constants_io.read_surface_geopotential(forecast_table_xarray)
+    )
+
+    ftx = forecast_table_xarray
+    valid_times_unix_sec = ftx.coords[model_utils.VALID_TIME_DIM].values
+    num_times = len(valid_times_unix_sec)
+
+    new_derived_field_names = None
+    new_derived_field_matrices = [None] * num_times
+
+    for i in range(num_times):
+        print('Computing derived fields valid at {0:s}...'.format(
+            time_conversion.unix_sec_to_string(
+                valid_times_unix_sec[i], '%Y-%m-%d-%H'
+            )
+        ))
+
+        (
+            new_derived_field_names, new_derived_field_matrices[i]
+        ) = _compute_derived_fields_1time(
+            forecast_table_xarray=
+            ftx.isel({model_utils.VALID_TIME_DIM: numpy.array([i], dtype=int)}),
+            derived_field_names=derived_field_names,
+            metadata_dict_by_field=metadata_dict_by_field,
+            do_multiprocessing=do_multiprocessing,
+            computing_helicity=computing_helicity,
+            surface_geopotential_matrix_m2_s02=
+            surface_geopotential_matrix_m2_s02
+        )
+
+    new_derived_field_matrix = numpy.stack(new_derived_field_matrices, axis=0)
 
     output_file_name = derived_field_io.find_file(
         directory_name=output_dir_name,
@@ -464,13 +522,13 @@ def _run(input_dir_name, model_name, init_time_string, do_multiprocessing,
     print('Writing results to: "{0:s}"...'.format(output_file_name))
     derived_field_io.write_file(
         netcdf_file_name=output_file_name,
-        derived_field_matrix=derived_field_matrix,
+        derived_field_matrix=new_derived_field_matrix,
         valid_times_unix_sec=numpy.array(
             [ftx.coords[model_utils.VALID_TIME_DIM].values[0]], dtype=int
         ),
         latitudes_deg_n=ftx.coords[model_utils.LATITUDE_DEG_NORTH_DIM].values,
         longitudes_deg_e=ftx.coords[model_utils.LONGITUDE_DEG_EAST_DIM].values,
-        derived_field_names=derived_field_names
+        derived_field_names=new_derived_field_names
     )
 
 
