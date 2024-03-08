@@ -103,6 +103,13 @@ def read_file(netcdf_file_name):
         for t in valid_time_strings
     ], dtype=int)
 
+    forecast_table_xarray[
+        model_utils.SPECIFIC_HUMIDITY_KG_KG01_KEY
+    ].values = numpy.maximum(
+        forecast_table_xarray[model_utils.SPECIFIC_HUMIDITY_KG_KG01_KEY].values,
+        0.
+    )
+
     forecast_table_xarray = forecast_table_xarray.rename_dims({
         'time': model_utils.VALID_TIME_DIM
     })
