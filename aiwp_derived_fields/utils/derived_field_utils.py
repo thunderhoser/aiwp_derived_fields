@@ -1815,6 +1815,24 @@ def get_precipitable_water(
     print(spec_humidity_matrix_kg_kg01[:, row_index, column_index][inds][subinds])
     print(precipitable_water_matrix_kg_m02[row_index, column_index])
 
+    this_coeff = -METRES_TO_MM / (WATER_DENSITY_KG_M03 * GRAVITY_M_S02)
+    this_pwat = this_coeff * simpson(
+        y=spec_humidity_matrix_kg_kg01[:, row_index, column_index][inds][subinds],
+        x=pressure_matrix_pascals[:, row_index, column_index][inds][subinds],
+        axis=0,
+        even='simpson'
+    )
+    print(this_pwat)
+
+    this_coeff = -METRES_TO_MM / (WATER_DENSITY_KG_M03 * GRAVITY_M_S02)
+    this_pwat = this_coeff * simpson(
+        y=spec_humidity_matrix_kg_kg01[:, row_index, column_index][inds][subinds],
+        x=pressure_matrix_pascals[:, row_index, column_index][inds][subinds],
+        axis=0,
+        even='avg'
+    )
+    print(this_pwat)
+
     assert not numpy.any(precipitable_water_matrix_kg_m02 < 0.)
 
     print('Estimating precipitable water took {0:.1f} seconds.'.format(
