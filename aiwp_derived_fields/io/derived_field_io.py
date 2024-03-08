@@ -163,5 +163,5 @@ def write_file(
         data_vars=main_data_dict, coords=coord_dict
     )
     derived_field_table_xarray.to_netcdf(
-        path=netcdf_file_name, mode='w', format='NETCDF3_64BIT'
+        path=netcdf_file_name, mode='w', format='NETCDF4'
     )
