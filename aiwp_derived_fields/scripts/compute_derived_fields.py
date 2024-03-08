@@ -506,6 +506,9 @@ def _run(input_dir_name, model_name, init_time_string, do_multiprocessing,
             surface_geopotential_matrix_m2_s02
         )
 
+        print('ARRAY SHAPE:')
+        print(new_derived_field_matrices[i].shape)
+
     new_derived_field_matrix = numpy.stack(new_derived_field_matrices, axis=0)
 
     output_file_name = derived_field_io.find_file(
