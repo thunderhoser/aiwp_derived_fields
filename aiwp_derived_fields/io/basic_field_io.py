@@ -9,7 +9,9 @@ import xarray
 from gewittergefahr.gg_utils import time_conversion
 from gewittergefahr.gg_utils import number_rounding
 from gewittergefahr.gg_utils import error_checking
+from gewittergefahr.gg_utils import moisture_conversions as moisture_conv
 from aiwp_derived_fields.utils import model_utils
+from aiwp_derived_fields.utils import derived_field_utils
 
 TIME_FORMAT = '%Y-%m-%dT%H:%M:%S'
 INIT_TIME_INTERVAL_SEC = 6 * 3600
@@ -102,6 +104,55 @@ def read_file(netcdf_file_name):
         time_conversion.string_to_unix_sec(t, TIME_FORMAT)
         for t in valid_time_strings
     ], dtype=int)
+
+    ftx = forecast_table_xarray
+    if model_utils.SPECIFIC_HUMIDITY_KG_KG01_KEY not in ftx.data_vars:
+        relative_humidity_matrix = 0.01 * ftx['r'].values
+        relative_humidity_matrix = numpy.maximum(relative_humidity_matrix, 0.)
+        relative_humidity_matrix = numpy.minimum(relative_humidity_matrix, 1.)
+
+        pressure_matrix_pascals = (
+            derived_field_utils._get_model_pressure_matrix(
+                forecast_table_xarray=ftx,
+                vertical_axis_first=True
+            )
+        )
+
+        num_times = len(ftx.coords[model_utils.VALID_TIME_DIM].values)
+        pressure_matrix_pascals = numpy.expand_dims(
+            pressure_matrix_pascals, axis=0
+        )
+        pressure_matrix_pascals = numpy.repeat(
+            pressure_matrix_pascals, axis=0, repeats=num_times
+        )
+
+        dewpoint_matrix_kelvins = moisture_conv.relative_humidity_to_dewpoint(
+            relative_humidities=relative_humidity_matrix,
+            temperatures_kelvins=
+            ftx[model_utils.TEMPERATURE_KELVINS_KEY].values,
+            total_pressures_pascals=pressure_matrix_pascals
+        )
+
+        spec_humidity_matrix_kg_kg01 = (
+            moisture_conv.dewpoint_to_specific_humidity(
+                dewpoints_kelvins=dewpoint_matrix_kelvins,
+                temperatures_kelvins=
+                ftx[model_utils.TEMPERATURE_KELVINS_KEY].values,
+                total_pressures_pascals=pressure_matrix_pascals
+            )
+        )
+
+        these_dims = (
+            model_utils.VALID_TIME_DIM,
+            model_utils.PRESSURE_HPA_DIM,
+            model_utils.LATITUDE_DEG_NORTH_DIM,
+            model_utils.LONGITUDE_DEG_EAST_DIM
+        )
+        forecast_table_xarray = forecast_table_xarray.assign({
+            model_utils.SPECIFIC_HUMIDITY_KG_KG01_KEY: (
+                these_dims, spec_humidity_matrix_kg_kg01
+            )
+        })
 
     forecast_table_xarray[
         model_utils.SPECIFIC_HUMIDITY_KG_KG01_KEY
