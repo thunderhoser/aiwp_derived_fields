@@ -816,20 +816,27 @@ def _integrate_to_precipitable_water(
 
                 continue
 
-            try:
-                precipitable_water_matrix_kg_m02[i, j] = simpson(
-                    y=spec_humidity_matrix_kg_kg01[:, i, j][inds][subinds],
-                    x=pressure_matrix_pascals[:, i, j][inds][subinds],
-                    axis=0,
-                    even='simpson'
-                )
-            except:
-                precipitable_water_matrix_kg_m02[i, j] = simpson(
-                    y=spec_humidity_matrix_kg_kg01[:, i, j][inds][subinds],
-                    x=pressure_matrix_pascals[:, i, j][inds][subinds],
-                    axis=0,
-                    even='avg'
-                )
+            # try:
+            #     precipitable_water_matrix_kg_m02[i, j] = simpson(
+            #         y=spec_humidity_matrix_kg_kg01[:, i, j][inds][subinds],
+            #         x=pressure_matrix_pascals[:, i, j][inds][subinds],
+            #         axis=0,
+            #         even='simpson'
+            #     )
+            # except:
+            #     precipitable_water_matrix_kg_m02[i, j] = simpson(
+            #         y=spec_humidity_matrix_kg_kg01[:, i, j][inds][subinds],
+            #         x=pressure_matrix_pascals[:, i, j][inds][subinds],
+            #         axis=0,
+            #         even='avg'
+            #     )
+
+            precipitable_water_matrix_kg_m02[i, j] = simpson(
+                y=spec_humidity_matrix_kg_kg01[:, i, j][inds][subinds],
+                x=pressure_matrix_pascals[:, i, j][inds][subinds],
+                axis=0,
+                even='avg'
+            )
 
     coefficient = -METRES_TO_MM / (WATER_DENSITY_KG_M03 * GRAVITY_M_S02)
     return coefficient * precipitable_water_matrix_kg_m02
@@ -1796,42 +1803,6 @@ def get_precipitable_water(
             pressure_matrix_pascals=pressure_matrix_pascals,
             spec_humidity_matrix_kg_kg01=spec_humidity_matrix_kg_kg01
         )
-
-    print(numpy.mean(precipitable_water_matrix_kg_m02 < 0.))
-
-    row_indices, column_indices = numpy.where(precipitable_water_matrix_kg_m02 < 0.)
-    row_index = row_indices[0]
-    column_index = column_indices[0]
-
-    print(pressure_matrix_pascals[:, row_index, column_index])
-    print(spec_humidity_matrix_kg_kg01[:, row_index, column_index])
-
-    inds = numpy.argsort(-pressure_matrix_pascals[:, row_index, column_index])
-    subinds = numpy.where(numpy.invert(
-        numpy.isnan(spec_humidity_matrix_kg_kg01[:, row_index, column_index][inds])
-    ))[0]
-
-    print(pressure_matrix_pascals[:, row_index, column_index][inds][subinds])
-    print(spec_humidity_matrix_kg_kg01[:, row_index, column_index][inds][subinds])
-    print(precipitable_water_matrix_kg_m02[row_index, column_index])
-
-    this_coeff = -METRES_TO_MM / (WATER_DENSITY_KG_M03 * GRAVITY_M_S02)
-    this_pwat = this_coeff * simpson(
-        y=spec_humidity_matrix_kg_kg01[:, row_index, column_index][inds][subinds],
-        x=pressure_matrix_pascals[:, row_index, column_index][inds][subinds],
-        axis=0,
-        even='simpson'
-    )
-    print(this_pwat)
-
-    this_coeff = -METRES_TO_MM / (WATER_DENSITY_KG_M03 * GRAVITY_M_S02)
-    this_pwat = this_coeff * simpson(
-        y=spec_humidity_matrix_kg_kg01[:, row_index, column_index][inds][subinds],
-        x=pressure_matrix_pascals[:, row_index, column_index][inds][subinds],
-        axis=0,
-        even='avg'
-    )
-    print(this_pwat)
 
     assert not numpy.any(precipitable_water_matrix_kg_m02 < 0.)
 
