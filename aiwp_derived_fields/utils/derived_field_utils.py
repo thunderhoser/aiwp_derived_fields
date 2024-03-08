@@ -1797,6 +1797,15 @@ def get_precipitable_water(
             spec_humidity_matrix_kg_kg01=spec_humidity_matrix_kg_kg01
         )
 
+    print(numpy.mean(precipitable_water_matrix_kg_m02 < 0.))
+
+    row_indices, column_indices = numpy.where(precipitable_water_matrix_kg_m02 < 0.)
+    row_index = row_indices[0]
+    column_index = column_indices[0]
+
+    print(pressure_matrix_pascals[:, row_index, column_index])
+    print(spec_humidity_matrix_kg_kg01[:, row_index, column_index])
+
     assert not numpy.any(precipitable_water_matrix_kg_m02 < 0.)
 
     print('Estimating precipitable water took {0:.1f} seconds.'.format(
