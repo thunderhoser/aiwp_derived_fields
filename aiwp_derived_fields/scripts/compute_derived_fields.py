@@ -118,6 +118,7 @@ def _compute_derived_fields_1time(
         this_basic_field_name = (
             this_meta_dict[derived_field_utils.BASIC_FIELD_KEY]
         )
+        print(this_basic_field_name)
 
         if (
                 this_basic_field_name ==
@@ -135,6 +136,7 @@ def _compute_derived_fields_1time(
             continue
 
         if this_basic_field_name in derived_field_utils.CAPE_CIN_NAMES:
+            print('FOO4')
             (
                 this_cape_matrix_j_kg01,
                 this_cin_matrix_j_kg01,
@@ -195,6 +197,7 @@ def _compute_derived_fields_1time(
             new_derived_field_matrices.append(this_cin_matrix_j_kg01)
 
         elif this_basic_field_name == derived_field_utils.LIFTED_INDEX_NAME:
+            print('FOO5')
             (
                 this_li_matrix_kelvins,
                 surface_pressure_matrix_pascals
@@ -213,6 +216,7 @@ def _compute_derived_fields_1time(
             new_derived_field_matrices.append(this_li_matrix_kelvins)
 
         elif this_basic_field_name == derived_field_utils.PRECIPITABLE_WATER_NAME:
+            print('FOO6')
             (
                 this_pw_matrix_kg_m02,
                 surface_pressure_matrix_pascals,
@@ -233,6 +237,7 @@ def _compute_derived_fields_1time(
             new_derived_field_matrices.append(this_pw_matrix_kg_m02)
 
         elif this_basic_field_name == derived_field_utils.SCALAR_WIND_SHEAR_NAME:
+            print('FOO7')
             (
                 this_zonal_shear_matrix_m_s01,
                 this_merid_shear_matrix_m_s01,
@@ -270,6 +275,7 @@ def _compute_derived_fields_1time(
             new_derived_field_matrices.append(this_merid_shear_matrix_m_s01)
 
         elif this_basic_field_name == derived_field_utils.SCALAR_STORM_MOTION_NAME:
+            print('FOO8')
             (
                 this_zonal_motion_matrix_m_s01,
                 this_merid_motion_matrix_m_s01,
@@ -303,6 +309,7 @@ def _compute_derived_fields_1time(
             new_derived_field_matrices.append(this_merid_motion_matrix_m_s01)
 
         elif this_basic_field_name == derived_field_utils.PBL_HEIGHT_NAME:
+            print('FOO9')
             (
                 this_height_matrix_m_agl,
                 surface_pressure_matrix_pascals,
@@ -321,6 +328,7 @@ def _compute_derived_fields_1time(
             new_derived_field_matrices.append(this_height_matrix_m_agl)
 
         elif this_basic_field_name == derived_field_utils.HELICITY_NAME:
+            print('FOO10')
             helicity_flags = numpy.array([
                 md[derived_field_utils.BASIC_FIELD_KEY] ==
                 derived_field_utils.HELICITY_NAME
