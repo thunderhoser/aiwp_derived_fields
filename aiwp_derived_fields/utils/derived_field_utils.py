@@ -7,6 +7,7 @@ import numpy
 from xcape import core
 from scipy.integrate import simpson
 from scipy.interpolate import interp1d, InterpolatedUnivariateSpline
+from gewittergefahr.gg_utils import number_rounding
 from gewittergefahr.gg_utils import error_checking
 from gewittergefahr.gg_utils import temperature_conversions as temperature_conv
 from gewittergefahr.gg_utils import moisture_conversions as moisture_conv
@@ -590,18 +591,20 @@ def _interp_pressure_to_surface(
     num_grid_rows = surface_geopotential_matrix_m2_s02.shape[0]
     num_grid_columns = surface_geopotential_matrix_m2_s02.shape[1]
 
-    if use_spline:
-        geoptl_sort_index_matrix = numpy.argsort(
-            geopotential_matrix_m2_s02, axis=0
-        )
+    if test_mode:
+        rounded_geopotential_matrix_m2_s02 = geopotential_matrix_m2_s02
     else:
-        geoptl_sort_index_matrix = None
+        rounded_geopotential_matrix_m2_s02 = number_rounding.round_to_nearest(
+            geopotential_matrix_m2_s02, 1000.
+        )
 
     for i in range(num_grid_rows):
         for j in range(num_grid_columns):
-            if use_spline:
-                inds = geoptl_sort_index_matrix[:, i, j]
+            _, inds = numpy.unique(
+                rounded_geopotential_matrix_m2_s02[:, i, j], return_index=True
+            )
 
+            if use_spline:
                 interp_object = InterpolatedUnivariateSpline(
                     x=geopotential_matrix_m2_s02[:, i, j][inds],
                     y=log10_pressure_matrix_pascals[:, i, j][inds],
@@ -609,13 +612,13 @@ def _interp_pressure_to_surface(
                 )
             else:
                 interp_object = interp1d(
-                    x=geopotential_matrix_m2_s02[:, i, j],
-                    y=log10_pressure_matrix_pascals[:, i, j],
+                    x=geopotential_matrix_m2_s02[:, i, j][inds],
+                    y=log10_pressure_matrix_pascals[:, i, j][inds],
                     kind='linear',
                     axis=0,
                     bounds_error=False,
                     fill_value='extrapolate',
-                    assume_sorted=False
+                    assume_sorted=True
                 )
 
             log10_surface_pressure_matrix_pascals[i, j] = interp_object(
@@ -630,7 +633,8 @@ def _interp_pressure_to_surface(
 
 def _interp_wind_to_heights_agl(
         wind_matrix_m_s01, geopotential_matrix_m2_s02,
-        surface_geopotential_matrix_m2_s02, target_heights_m_agl, use_spline):
+        surface_geopotential_matrix_m2_s02, target_heights_m_agl, use_spline,
+        test_mode=False):
     """At every horizontal grid pt, interpolates wind to ground-relative hgts.
 
     M = number of rows (latitudes) in grid
@@ -649,6 +653,7 @@ def _interp_wind_to_heights_agl(
     :param target_heights_m_agl: length-T numpy array of target heights (metres
         above ground level).  Will interpolate to these heights.
     :param use_spline: Boolean flag.
+    :param test_mode: Leave this alone.
     :return: interp_wind_matrix_m_s01: M-by-N numpy array of interpolated wind
         speeds.
     """
@@ -668,18 +673,20 @@ def _interp_wind_to_heights_agl(
         (num_target_heights, num_grid_rows, num_grid_columns), numpy.nan
     )
 
-    if use_spline:
-        geoptl_sort_index_matrix = numpy.argsort(
-            geopotential_matrix_m2_s02, axis=0
-        )
+    if test_mode:
+        rounded_geopotential_matrix_m2_s02 = geopotential_matrix_m2_s02
     else:
-        geoptl_sort_index_matrix = None
+        rounded_geopotential_matrix_m2_s02 = number_rounding.round_to_nearest(
+            geopotential_matrix_m2_s02, 1000.
+        )
 
     for i in range(num_grid_rows):
         for j in range(num_grid_columns):
-            if use_spline:
-                inds = geoptl_sort_index_matrix[:, i, j]
+            _, inds = numpy.unique(
+                rounded_geopotential_matrix_m2_s02[:, i, j], return_index=True
+            )
 
+            if use_spline:
                 interp_object = InterpolatedUnivariateSpline(
                     x=geopotential_matrix_m2_s02[:, i, j][inds],
                     y=wind_matrix_m_s01[:, i, j][inds],
@@ -687,13 +694,13 @@ def _interp_wind_to_heights_agl(
                 )
             else:
                 interp_object = interp1d(
-                    x=geopotential_matrix_m2_s02[:, i, j],
-                    y=wind_matrix_m_s01[:, i, j],
+                    x=geopotential_matrix_m2_s02[:, i, j][inds],
+                    y=wind_matrix_m_s01[:, i, j][inds],
                     kind='linear',
                     axis=0,
                     bounds_error=False,
                     fill_value='extrapolate',
-                    assume_sorted=False
+                    assume_sorted=True
                 )
 
             interp_wind_matrix_m_s01[:, i, j] = interp_object(
@@ -1422,10 +1429,6 @@ def get_cape_and_cin(
                 e = end_rows[k]
                 cape_matrix_j_kg01[s:e, :] = cape_submatrices[k]
                 cin_matrix_j_kg01[s:e, :] = cin_submatrices[k]
-
-        # TODO(thunderhoser): Figure out why I'm getting NaN's here!
-        # assert not numpy.any(numpy.isnan(cape_matrix_j_kg01))
-        # assert not numpy.any(numpy.isnan(cin_matrix_j_kg01))
     else:
         cape_matrix_j_kg01, cin_matrix_j_kg01 = core.calc_cape(
             PASCALS_TO_HPA * pressure_levels_pascals,
@@ -1444,6 +1447,9 @@ def get_cape_and_cin(
             adiabat='pseudo-liquid',
             vertical_lev='pressure'
         )[:2]
+
+    assert not numpy.any(numpy.isnan(cape_matrix_j_kg01))
+    assert not numpy.any(numpy.isnan(cin_matrix_j_kg01))
 
     print((
         'Took xcape {0:.1f} seconds to compute CAPE and CIN for {1:d} grid '
@@ -1554,14 +1560,14 @@ def get_lifted_index(
                 s = start_rows[k]
                 e = end_rows[k]
                 lifted_temp_matrix_celsius[s:e, :] = submatrices[k]
-
-        assert not numpy.any(numpy.isnan(lifted_temp_matrix_celsius))
     else:
         lifted_temp_matrix_celsius = sharppy_thermo.wetlift(
             p=PASCALS_TO_HPA * surface_pressure_matrix_pascals,
             t=temperature_conv.kelvins_to_celsius(surface_temp_matrix_kelvins),
             p2=PASCALS_TO_HPA * final_pressure_matrix_pascals
         )
+
+    assert not numpy.any(numpy.isnan(lifted_temp_matrix_celsius))
 
     print((
         'Took SHARPpy {0:.1f} seconds to lift parcels for {1:d} grid points.'

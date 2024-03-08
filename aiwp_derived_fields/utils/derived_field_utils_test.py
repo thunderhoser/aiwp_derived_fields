@@ -1080,25 +1080,25 @@ class DerivedFieldUtilsTests(unittest.TestCase):
             atol=TOLERANCE, equal_nan=True
         ))
 
-    # def test_interp_pressure_to_surface(self):
-    #     """Ensures correct output from _interp_pressure_to_surface."""
-    #
-    #     this_pressure_matrix_pascals = (
-    #         derived_field_utils._interp_pressure_to_surface(
-    #             log10_pressure_matrix_pascals=PRESSURE_MATRIX_FOR_INTERP_PASCALS,
-    #             geopotential_matrix_m2_s02=GEOPOTENTIAL_MATRIX_M2_S02,
-    #             surface_geopotential_matrix_m2_s02=
-    #             SURFACE_GEOPOTENTIAL_MATRIX_M2_S02,
-    #             use_spline=False,
-    #             test_mode=True
-    #         )
-    #     )
-    #
-    #     self.assertTrue(numpy.allclose(
-    #         this_pressure_matrix_pascals,
-    #         INTERP_SURFACE_PRESSURE_MATRIX_PASCALS,
-    #         atol=TOLERANCE
-    #     ))
+    def test_interp_pressure_to_surface(self):
+        """Ensures correct output from _interp_pressure_to_surface."""
+
+        this_pressure_matrix_pascals = (
+            derived_field_utils._interp_pressure_to_surface(
+                log10_pressure_matrix_pascals=PRESSURE_MATRIX_FOR_INTERP_PASCALS,
+                geopotential_matrix_m2_s02=GEOPOTENTIAL_MATRIX_M2_S02,
+                surface_geopotential_matrix_m2_s02=
+                SURFACE_GEOPOTENTIAL_MATRIX_M2_S02,
+                use_spline=False,
+                test_mode=True
+            )
+        )
+
+        self.assertTrue(numpy.allclose(
+            this_pressure_matrix_pascals,
+            INTERP_SURFACE_PRESSURE_MATRIX_PASCALS,
+            atol=TOLERANCE
+        ))
 
     def test_interp_wind_to_heights_m_agl(self):
         """Ensures correct output from _interp_wind_to_heights_m_agl."""
@@ -1111,7 +1111,8 @@ class DerivedFieldUtilsTests(unittest.TestCase):
             surface_geopotential_matrix_m2_s02=
             SURFACE_GEOPOTENTIAL_MATRIX_M2_S02,
             target_heights_m_agl=numpy.array([0.]),
-            use_spline=False
+            use_spline=False,
+            test_mode=True
         )[0, ...]
 
         self.assertTrue(numpy.allclose(

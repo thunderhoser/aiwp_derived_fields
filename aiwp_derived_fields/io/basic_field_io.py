@@ -107,7 +107,7 @@ def read_file(netcdf_file_name):
         model_utils.SPECIFIC_HUMIDITY_KG_KG01_KEY
     ].values = numpy.maximum(
         forecast_table_xarray[model_utils.SPECIFIC_HUMIDITY_KG_KG01_KEY].values,
-        0.
+        1e-10
     )
 
     forecast_table_xarray = forecast_table_xarray.rename_dims({
