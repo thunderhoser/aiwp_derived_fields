@@ -106,6 +106,9 @@ def read_file(netcdf_file_name):
     forecast_table_xarray = forecast_table_xarray.rename_dims({
         'time': model_utils.VALID_TIME_DIM
     })
+    forecast_table_xarray = forecast_table_xarray.assign_coords({
+        'time': valid_times_unix_sec
+    })
 
     print(forecast_table_xarray.coords[model_utils.VALID_TIME_DIM].values)
     print(len(forecast_table_xarray.coords[model_utils.VALID_TIME_DIM].values))
