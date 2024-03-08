@@ -523,9 +523,7 @@ def _run(input_dir_name, model_name, init_time_string, do_multiprocessing,
     derived_field_io.write_file(
         netcdf_file_name=output_file_name,
         derived_field_matrix=new_derived_field_matrix,
-        valid_times_unix_sec=numpy.array(
-            [ftx.coords[model_utils.VALID_TIME_DIM].values[0]], dtype=int
-        ),
+        valid_times_unix_sec=valid_times_unix_sec,
         latitudes_deg_n=ftx.coords[model_utils.LATITUDE_DEG_NORTH_DIM].values,
         longitudes_deg_e=ftx.coords[model_utils.LONGITUDE_DEG_EAST_DIM].values,
         derived_field_names=new_derived_field_names
