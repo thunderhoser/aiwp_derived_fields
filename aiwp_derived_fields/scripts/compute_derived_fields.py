@@ -167,6 +167,7 @@ def _compute_derived_fields_1time(
                 this_meta_dict
             )
             new_derived_field_names.append(new_field_name)
+            print('Appending CAPE')
             new_derived_field_matrices.append(this_cape_matrix_j_kg01)
 
             if this_ps == derived_field_utils.MIXED_LAYER_PARCEL_SOURCE_STRING:
@@ -186,6 +187,7 @@ def _compute_derived_fields_1time(
                 this_meta_dict
             )
             new_derived_field_names.append(new_field_name)
+            print('Appending CIN')
             new_derived_field_matrices.append(this_cin_matrix_j_kg01)
 
         elif this_basic_field_name == derived_field_utils.LIFTED_INDEX_NAME:
@@ -203,6 +205,7 @@ def _compute_derived_fields_1time(
             )
 
             new_derived_field_names.append(derived_field_names[j])
+            print('Appending LI')
             new_derived_field_matrices.append(this_li_matrix_kelvins)
 
         elif this_basic_field_name == derived_field_utils.PRECIPITABLE_WATER_NAME:
@@ -222,6 +225,7 @@ def _compute_derived_fields_1time(
             )
 
             new_derived_field_names.append(derived_field_names[j])
+            print('Appending PWAT')
             new_derived_field_matrices.append(this_pw_matrix_kg_m02)
 
         elif this_basic_field_name == derived_field_utils.SCALAR_WIND_SHEAR_NAME:
@@ -248,6 +252,7 @@ def _compute_derived_fields_1time(
                 this_meta_dict
             )
             new_derived_field_names.append(new_field_name)
+            print('Appending zonal shear')
             new_derived_field_matrices.append(this_zonal_shear_matrix_m_s01)
 
             this_meta_dict[derived_field_utils.BASIC_FIELD_KEY] = (
@@ -257,6 +262,7 @@ def _compute_derived_fields_1time(
                 this_meta_dict
             )
             new_derived_field_names.append(new_field_name)
+            print('Appending meridional shear')
             new_derived_field_matrices.append(this_merid_shear_matrix_m_s01)
 
         elif this_basic_field_name == derived_field_utils.SCALAR_STORM_MOTION_NAME:
@@ -279,6 +285,7 @@ def _compute_derived_fields_1time(
                 this_meta_dict
             )
             new_derived_field_names.append(new_field_name)
+            print('Appending zonal storm motion')
             new_derived_field_matrices.append(this_zonal_motion_matrix_m_s01)
 
             this_meta_dict[derived_field_utils.BASIC_FIELD_KEY] = (
@@ -288,6 +295,7 @@ def _compute_derived_fields_1time(
                 this_meta_dict
             )
             new_derived_field_names.append(new_field_name)
+            print('Appending meridional storm motion')
             new_derived_field_matrices.append(this_merid_motion_matrix_m_s01)
 
         elif this_basic_field_name == derived_field_utils.PBL_HEIGHT_NAME:
@@ -305,6 +313,7 @@ def _compute_derived_fields_1time(
             )
 
             new_derived_field_names.append(derived_field_names[j])
+            print('Appending PBL height')
             new_derived_field_matrices.append(this_height_matrix_m_agl)
 
         elif this_basic_field_name == derived_field_utils.HELICITY_NAME:
@@ -347,6 +356,7 @@ def _compute_derived_fields_1time(
                     this_meta_dict
                 )
                 new_derived_field_names.append(new_field_name)
+                print('Appending positive helicity')
                 new_derived_field_matrices.append(
                     positive_helicity_matrix_m2_s02[i, ...]
                 )
@@ -358,6 +368,7 @@ def _compute_derived_fields_1time(
                     this_meta_dict
                 )
                 new_derived_field_names.append(new_field_name)
+                print('Appending negative helicity')
                 new_derived_field_matrices.append(
                     negative_helicity_matrix_m2_s02[i, ...]
                 )
@@ -375,6 +386,7 @@ def _compute_derived_fields_1time(
                 this_meta_dict
             )
             new_derived_field_names.append(new_field_name)
+            print('Appending zonal storm motion')
             new_derived_field_matrices.append(
                 zonal_storm_motion_matrix_m_s01
             )
@@ -386,6 +398,7 @@ def _compute_derived_fields_1time(
                 this_meta_dict
             )
             new_derived_field_names.append(new_field_name)
+            print('Appending meridional storm motion')
             new_derived_field_matrices.append(
                 meridional_storm_motion_matrix_m_s01
             )
