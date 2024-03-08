@@ -109,7 +109,9 @@ def _compute_derived_fields_1time(
     is_helicity_done = False
 
     for j in range(len(derived_field_names)):
+        print(derived_field_names[j])
         if derived_field_names[j] in new_derived_field_names:
+            print('FOO1')
             continue
 
         this_meta_dict = metadata_dict_by_field[j]
@@ -122,12 +124,14 @@ def _compute_derived_fields_1time(
                 derived_field_utils.SCALAR_STORM_MOTION_NAME
                 and computing_helicity
         ):
+            print('FOO2')
             continue
 
         if (
                 this_basic_field_name == derived_field_utils.HELICITY_NAME
                 and is_helicity_done
         ):
+            print('FOO3')
             continue
 
         if this_basic_field_name in derived_field_utils.CAPE_CIN_NAMES:
