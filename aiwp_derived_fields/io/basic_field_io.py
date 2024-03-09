@@ -118,7 +118,7 @@ def read_file(netcdf_file_name):
             )
         )
 
-        num_times = len(ftx.coords[model_utils.VALID_TIME_DIM].values)
+        num_times = len(ftx.coords['time'].values)
         pressure_matrix_pascals = numpy.expand_dims(
             pressure_matrix_pascals, axis=0
         )
@@ -143,7 +143,7 @@ def read_file(netcdf_file_name):
         )
 
         these_dims = (
-            model_utils.VALID_TIME_DIM,
+            'time',
             model_utils.PRESSURE_HPA_DIM,
             model_utils.LATITUDE_DEG_NORTH_DIM,
             model_utils.LONGITUDE_DEG_EAST_DIM
