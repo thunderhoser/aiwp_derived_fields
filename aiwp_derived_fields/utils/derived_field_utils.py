@@ -794,6 +794,8 @@ def _integrate_to_precipitable_water(
     for i in range(num_grid_rows):
         for j in range(num_grid_columns):
             inds = pressure_sort_index_matrix[:, i, j]
+
+            # TODO(thunderhoser): I could probably make this more efficient.
             subinds = numpy.where(numpy.invert(
                 numpy.isnan(spec_humidity_matrix_kg_kg01[:, i, j][inds])
             ))[0]
@@ -808,7 +810,7 @@ def _integrate_to_precipitable_water(
                 these_pressures_pascals = (
                     pressure_matrix_pascals[:, i, j][inds][subinds]
                 )
-                precipitable_water_matrix_kg_m02[i, j] = -numpy.sum(
+                precipitable_water_matrix_kg_m02[i, j] = numpy.sum(
                     0.5 *
                     (these_humid_kg_kg01[:-1] + these_humid_kg_kg01[1:]) *
                     (these_pressures_pascals[:-1] - these_pressures_pascals[1:])
@@ -831,14 +833,29 @@ def _integrate_to_precipitable_water(
             #         even='avg'
             #     )
 
-            precipitable_water_matrix_kg_m02[i, j] = simpson(
+            precipitable_water_matrix_kg_m02[i, j] = -1 * simpson(
                 y=spec_humidity_matrix_kg_kg01[:, i, j][inds][subinds],
                 x=pressure_matrix_pascals[:, i, j][inds][subinds],
                 axis=0,
                 even='avg'
             )
 
-    coefficient = -METRES_TO_MM / (WATER_DENSITY_KG_M03 * GRAVITY_M_S02)
+            if precipitable_water_matrix_kg_m02[i, j] >= 0:
+                continue
+
+            these_humid_kg_kg01 = (
+                spec_humidity_matrix_kg_kg01[:, i, j][inds][subinds]
+            )
+            these_pressures_pascals = (
+                pressure_matrix_pascals[:, i, j][inds][subinds]
+            )
+            precipitable_water_matrix_kg_m02[i, j] = numpy.sum(
+                0.5 *
+                (these_humid_kg_kg01[:-1] + these_humid_kg_kg01[1:]) *
+                (these_pressures_pascals[:-1] - these_pressures_pascals[1:])
+            )
+
+    coefficient = METRES_TO_MM / (WATER_DENSITY_KG_M03 * GRAVITY_M_S02)
     return coefficient * precipitable_water_matrix_kg_m02
 
 
