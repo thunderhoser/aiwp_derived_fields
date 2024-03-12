@@ -7,8 +7,8 @@ from matplotlib import pyplot
 from gewittergefahr.gg_utils import grids
 from gewittergefahr.gg_utils import longitude_conversion as lng_conversion
 from gewittergefahr.gg_utils import error_checking
-from gewittergefahr.plotting import plotting_utils as gg_plotting_utils
 from aiwp_derived_fields.utils import derived_field_utils
+from aiwp_derived_fields.outside_code import gg_plotting_utils
 
 METRES_PER_SECOND_TO_KT = 3.6 / 1.852
 METRES_TO_KM = 0.001
