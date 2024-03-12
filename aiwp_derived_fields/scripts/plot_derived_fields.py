@@ -288,7 +288,7 @@ def _run(input_dir_name, model_name, init_time_string, derived_field_names,
             exact_dimensions=numpy.array([num_fields], dtype=int)
         )
         error_checking.assert_is_greater_numpy_array(
-            max_colour_values, min_colour_values
+            max_colour_values - min_colour_values, 0.
         )
     else:
         error_checking.assert_is_numpy_array(
@@ -296,7 +296,7 @@ def _run(input_dir_name, model_name, init_time_string, derived_field_names,
             exact_dimensions=numpy.array([num_fields], dtype=int)
         )
         error_checking.assert_is_greater_numpy_array(
-            max_colour_percentiles, min_colour_percentiles
+            max_colour_percentiles - min_colour_percentiles, 0.
         )
 
     file_system_utils.mkdir_recursive_if_necessary(
