@@ -46,3 +46,20 @@ def check_model_name(model_name):
     )
 
     raise ValueError(error_string)
+
+
+def model_name_to_fancy(model_name):
+    """Converts model name to fancy version.
+
+    :param model_name: Pythonic name (must be in list `ALL_MODEL_NAMES`).
+    :return: fancy_model_name: Fancy name (suitable for figure titles and shit).
+    """
+
+    check_model_name(model_name)
+
+    if model_name == FOURCASTNET_VERSION2_NAME:
+        return 'FourCast v2'
+    if model_name == GRAPHCAST_VERSION1_NAME:
+        return 'GraphCast v1'
+
+    return 'Pangu v1'

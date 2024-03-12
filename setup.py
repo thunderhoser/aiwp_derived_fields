@@ -4,7 +4,8 @@ from setuptools import setup
 
 PACKAGE_NAMES = [
     'aiwp_derived_fields', 'aiwp_derived_fields.io',
-    'aiwp_derived_fields.utils', 'aiwp_derived_fields.outside_code'
+    'aiwp_derived_fields.utils', 'aiwp_derived_fields.plotting',
+    'aiwp_derived_fields.outside_code'
 ]
 KEYWORDS = [
     'machine learning', 'deep learning', 'artificial intelligence',
