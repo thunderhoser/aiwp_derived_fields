@@ -22,6 +22,7 @@ HOURS_TO_SECONDS = 3600
 
 SEQUENTIAL_COLOUR_MAP_OBJECT = pyplot.get_cmap('viridis')
 DIVERGING_COLOUR_MAP_OBJECT = pyplot.get_cmap('seismic')
+NAN_COLOUR = numpy.full(3, 152. / 255)
 
 FIGURE_WIDTH_INCHES = 15
 FIGURE_HEIGHT_INCHES = 15
@@ -170,6 +171,7 @@ def _plot_one_field(
     else:
         colour_map_object = SEQUENTIAL_COLOUR_MAP_OBJECT
 
+    colour_map_object.set_bad(NAN_COLOUR)
     colour_norm_object = pyplot.Normalize(
         vmin=min_colour_value, vmax=max_colour_value
     )
