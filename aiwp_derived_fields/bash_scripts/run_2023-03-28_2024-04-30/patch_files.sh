@@ -1,6 +1,7 @@
 #!/bin/bash
 
 CODE_DIR_NAME="/home/ralager/aiwp_derived_fields/aiwp_derived_fields/scripts"
+INPUT_DIR_NAME="/mnt/mlnas01/ai-models"
 OUTPUT_DIR_NAME="/mnt/mlnas01/ralager/aiwp_derived_fields"
 
 INIT_TIME_STRINGS=("2023-04-29-12" "2023-04-29-18" "2023-04-30-00" "2023-04-30-06" "2023-04-30-12" "2023-04-30-18" "2023-03-31-12" "2023-03-28-06" "2023-03-31-12" "2023-04-01-12")
