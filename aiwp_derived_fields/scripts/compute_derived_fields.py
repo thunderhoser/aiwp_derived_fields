@@ -101,6 +101,8 @@ def _compute_derived_fields_1time(
     :return: new_derived_field_matrix: M-by-N-by-F numpy array of data values.
     """
 
+    print(forecast_table_xarray)
+
     surface_pressure_matrix_pascals = None
     surface_dewpoint_matrix_kelvins = None
 

@@ -179,5 +179,4 @@ def read_files_1run(netcdf_3d_file_name, netcdf_2d_file_name,
             )
         })
 
-    print(forecast_table_3d_xarray)
     return forecast_table_3d_xarray
