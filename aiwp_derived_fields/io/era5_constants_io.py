@@ -81,6 +81,5 @@ def read_surface_geopotential(forecast_table_xarray, netcdf_file_name=None):
     surface_geopotential_matrix_m2_s02 = numpy.flip(
         era5_table_xarray['data'].values[..., k], axis=0
     )
-    print(surface_geopotential_matrix_m2_s02.shape)
 
     return surface_geopotential_matrix_m2_s02

@@ -213,6 +213,10 @@ def _get_slices_for_multiprocessing(num_grid_rows):
         num_grid_rows * slice_indices_normalized[1:]
     ).astype(int)
 
+    print(start_rows)
+    print(end_rows)
+    print('\n\n')
+
     return start_rows, end_rows
 
 
