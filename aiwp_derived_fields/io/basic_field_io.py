@@ -45,6 +45,7 @@ def find_file(directory_name, model_name, init_time_unix_sec,
     # Check input args.
     error_checking.assert_is_string(directory_name)
     model_utils.check_model_name(model_name)
+    assert model_name != model_utils.ECMWF_ERA5_NAME
     error_checking.assert_is_boolean(raise_error_if_missing)
 
     error_checking.assert_is_integer(init_time_unix_sec)

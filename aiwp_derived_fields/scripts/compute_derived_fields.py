@@ -6,6 +6,7 @@ import numpy
 from gewittergefahr.gg_utils import time_conversion
 from gewittergefahr.gg_utils import file_system_utils
 from aiwp_derived_fields.io import basic_field_io
+from aiwp_derived_fields.io import era5_basic_field_io
 from aiwp_derived_fields.io import era5_constants_io
 from aiwp_derived_fields.io import derived_field_io
 from aiwp_derived_fields.utils import model_utils
@@ -461,17 +462,37 @@ def _run(input_dir_name, model_name, init_time_string, do_multiprocessing,
     )
 
     # Read inputs (basic weather fields).
-    input_file_name = basic_field_io.find_file(
-        directory_name=input_dir_name,
-        model_name=model_name,
-        init_time_unix_sec=time_conversion.string_to_unix_sec(
-            init_time_string, TIME_FORMAT
-        ),
-        raise_error_if_missing=True
+    init_time_unix_sec = time_conversion.string_to_unix_sec(
+        init_time_string, TIME_FORMAT
     )
 
-    print('Reading data from: "{0:s}"...'.format(input_file_name))
-    forecast_table_xarray = basic_field_io.read_file(input_file_name)
+    if model_name == model_utils.ECMWF_ERA5_NAME:
+        input_file_name_3d, input_file_name_2d = (
+            era5_basic_field_io.find_files_1run(
+                directory_name=input_dir_name,
+                init_time_unix_sec=init_time_unix_sec,
+                raise_error_if_missing=True
+            )
+        )
+
+        print('Reading data from: "{0:s}" and "{1:s}"...'.format(
+            input_file_name_3d, input_file_name_2d
+        ))
+        forecast_table_xarray = era5_basic_field_io.read_files_1run(
+            netcdf_3d_file_name=input_file_name_3d,
+            netcdf_2d_file_name=input_file_name_2d,
+            init_time_unix_sec=init_time_unix_sec
+        )
+    else:
+        input_file_name = basic_field_io.find_file(
+            directory_name=input_dir_name,
+            model_name=model_name,
+            init_time_unix_sec=init_time_unix_sec,
+            raise_error_if_missing=True
+        )
+
+        print('Reading data from: "{0:s}"...'.format(input_file_name))
+        forecast_table_xarray = basic_field_io.read_file(input_file_name)
 
     # Read surface-geopotential field.  This might be needed to compute some
     # derived fields.

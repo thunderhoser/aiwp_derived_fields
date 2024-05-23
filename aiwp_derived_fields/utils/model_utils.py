@@ -5,10 +5,11 @@ from gewittergefahr.gg_utils import error_checking
 FOURCASTNET_VERSION2_NAME = 'FOUR_v200'
 GRAPHCAST_VERSION1_NAME = 'GRAP_v100'
 PANGU_WEATHER_VERSION1_NAME = 'PANG_v100'
+ECMWF_ERA5_NAME = 'ecmwf_era5'
 
 ALL_MODEL_NAMES = [
     FOURCASTNET_VERSION2_NAME, GRAPHCAST_VERSION1_NAME,
-    PANGU_WEATHER_VERSION1_NAME
+    PANGU_WEATHER_VERSION1_NAME, ECMWF_ERA5_NAME
 ]
 
 VALID_TIME_DIM = 'valid_time_unix_sec'
@@ -61,5 +62,7 @@ def model_name_to_fancy(model_name):
         return 'FourCast v2'
     if model_name == GRAPHCAST_VERSION1_NAME:
         return 'GraphCast v1'
+    if model_name == PANGU_WEATHER_VERSION1_NAME:
+        return 'Pangu v1'
 
-    return 'Pangu v1'
+    return 'ECMWF ERA5'
