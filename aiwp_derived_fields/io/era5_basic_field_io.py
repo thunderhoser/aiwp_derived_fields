@@ -156,12 +156,12 @@ def read_files_1run(netcdf_3d_file_name, netcdf_2d_file_name,
     )
     forecast_table_3d_xarray = ft3d
 
-    forecast_table_3d_xarray = forecast_table_3d_xarray.transpose(
-        model_utils.VALID_TIME_DIM,
-        model_utils.LATITUDE_DEG_NORTH_DIM,
-        model_utils.LONGITUDE_DEG_EAST_DIM,
-        model_utils.PRESSURE_HPA_DIM
-    )
+    # forecast_table_3d_xarray = forecast_table_3d_xarray.transpose(
+    #     model_utils.VALID_TIME_DIM,
+    #     model_utils.LATITUDE_DEG_NORTH_DIM,
+    #     model_utils.LONGITUDE_DEG_EAST_DIM,
+    #     model_utils.PRESSURE_HPA_DIM
+    # )
     forecast_table_2d_xarray = forecast_table_2d_xarray.rename_vars({
         't2m': model_utils.TEMPERATURE_2METRES_KELVINS_KEY
     })
