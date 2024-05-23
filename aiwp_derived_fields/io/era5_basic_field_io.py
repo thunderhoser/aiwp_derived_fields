@@ -165,7 +165,6 @@ def read_files_1run(netcdf_3d_file_name, netcdf_2d_file_name,
     forecast_table_2d_xarray = forecast_table_2d_xarray.rename_vars({
         't2m': model_utils.TEMPERATURE_2METRES_KELVINS_KEY
     })
-    print(forecast_table_2d_xarray)
 
     for this_var_name in [
             model_utils.TEMPERATURE_2METRES_KELVINS_KEY,
@@ -180,4 +179,5 @@ def read_files_1run(netcdf_3d_file_name, netcdf_2d_file_name,
             )
         })
 
+    print(forecast_table_3d_xarray)
     return forecast_table_3d_xarray
