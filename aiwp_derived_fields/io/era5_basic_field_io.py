@@ -53,7 +53,6 @@ def _subset_data_1init_time(forecast_table_xarray, init_time_unix_sec):
         'time': model_utils.VALID_TIME_DIM
     })
     forecast_table_xarray = forecast_table_xarray.drop_vars('time')
-    print(forecast_table_xarray)
     forecast_table_xarray = forecast_table_xarray.assign_coords({
         model_utils.VALID_TIME_DIM: numpy.array([init_time_unix_sec], dtype=int)
     })
