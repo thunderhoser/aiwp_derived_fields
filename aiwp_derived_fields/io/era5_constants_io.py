@@ -40,23 +40,22 @@ def read_surface_geopotential(forecast_table_xarray, netcdf_file_name=None):
     error_checking.assert_file_exists(netcdf_file_name)
     era5_table_xarray = xarray.open_dataset(netcdf_file_name)
 
-    k = numpy.where(
-        era5_table_xarray.coords['field'].values == 'geopotential_m2_s02'
-    )[0][0]
-
-    surface_geopotential_matrix_m2_s02 = numpy.flip(
-        era5_table_xarray['data'].values[..., k], axis=0
-    )
-
     era5_latitudes_deg_n = (
         era5_table_xarray.coords['latitude_deg_n'].values[::-1]
     )
     model_latitudes_deg_n = (
         forecast_table_xarray.coords[model_utils.LATITUDE_DEG_NORTH_DIM].values
     )
+
+    good_indices = numpy.array([
+        numpy.where(numpy.absolute(era5_latitudes_deg_n - m) <= TOLERANCE)[0][0]
+        for m in model_latitudes_deg_n
+    ], dtype=int)
     assert numpy.allclose(
-        era5_latitudes_deg_n, model_latitudes_deg_n, atol=TOLERANCE
+        era5_latitudes_deg_n[good_indices], model_latitudes_deg_n,
+        atol=TOLERANCE
     )
+    era5_table_xarray = era5_table_xarray.isel({'latitude_deg_n': good_indices})
 
     era5_longitudes_deg_e = lng_conversion.convert_lng_positive_in_west(
         era5_table_xarray.coords['longitude_deg_e'].values
@@ -64,8 +63,23 @@ def read_surface_geopotential(forecast_table_xarray, netcdf_file_name=None):
     model_longitudes_deg_e = lng_conversion.convert_lng_positive_in_west(
         forecast_table_xarray.coords[model_utils.LONGITUDE_DEG_EAST_DIM].values
     )
+
+    good_indices = numpy.array([
+        numpy.where(numpy.absolute(era5_longitudes_deg_e - m) <= TOLERANCE)[0][0]
+        for m in model_longitudes_deg_e
+    ], dtype=int)
     assert numpy.allclose(
-        era5_longitudes_deg_e, model_longitudes_deg_e, atol=TOLERANCE
+        era5_longitudes_deg_e[good_indices], model_longitudes_deg_e,
+        atol=TOLERANCE
+    )
+    era5_table_xarray = era5_table_xarray.isel({'longitude_deg_e': good_indices})
+
+    k = numpy.where(
+        era5_table_xarray.coords['field'].values == 'geopotential_m2_s02'
+    )[0][0]
+
+    surface_geopotential_matrix_m2_s02 = numpy.flip(
+        era5_table_xarray['data'].values[..., k], axis=0
     )
 
     return surface_geopotential_matrix_m2_s02
