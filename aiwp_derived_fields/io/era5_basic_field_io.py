@@ -156,12 +156,6 @@ def read_files_1run(netcdf_3d_file_name, netcdf_2d_file_name,
     )
     forecast_table_3d_xarray = ft3d
 
-    # forecast_table_3d_xarray = forecast_table_3d_xarray.transpose(
-    #     model_utils.VALID_TIME_DIM,
-    #     model_utils.LATITUDE_DEG_NORTH_DIM,
-    #     model_utils.LONGITUDE_DEG_EAST_DIM,
-    #     model_utils.PRESSURE_HPA_DIM
-    # )
     forecast_table_2d_xarray = forecast_table_2d_xarray.rename_vars({
         't2m': model_utils.TEMPERATURE_2METRES_KELVINS_KEY
     })
@@ -179,4 +173,24 @@ def read_files_1run(netcdf_3d_file_name, netcdf_2d_file_name,
             )
         })
 
+    # Pressure levels must be in decreasing order (example: 1000, 850, 700, 500,
+    # 250 mb).
+    ft3d = forecast_table_3d_xarray
+    ft3d = ft3d.assign_coords({
+        model_utils.PRESSURE_HPA_DIM:
+            ft3d.coords[model_utils.PRESSURE_HPA_DIM][::-1]
+    })
+
+    for this_var_name in ft3d.data_vars:
+        if model_utils.PRESSURE_HPA_DIM not in ft3d[this_var_name].dims:
+            continue
+
+        ft3d = ft3d.assign({
+            this_var_name: (
+                ft3d[this_var_name].dims,
+                numpy.flip(ft3d[this_var_name].values, axis=1)
+            )
+        })
+
+    forecast_table_3d_xarray = ft3d
     return forecast_table_3d_xarray

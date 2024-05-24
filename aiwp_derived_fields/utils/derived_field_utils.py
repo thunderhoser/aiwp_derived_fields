@@ -213,10 +213,6 @@ def _get_slices_for_multiprocessing(num_grid_rows):
         num_grid_rows * slice_indices_normalized[1:]
     ).astype(int)
 
-    print(start_rows)
-    print(end_rows)
-    print('\n\n')
-
     return start_rows, end_rows
 
 
@@ -601,9 +597,6 @@ def _interp_pressure_to_surface(
         rounded_geopotential_matrix_m2_s02 = number_rounding.round_to_nearest(
             geopotential_matrix_m2_s02, 1000.
         )
-
-    print(surface_geopotential_matrix_m2_s02.shape)
-    print(rounded_geopotential_matrix_m2_s02.shape)
 
     for i in range(num_grid_rows):
         for j in range(num_grid_columns):
