@@ -1,7 +1,7 @@
 #!/bin/bash
 
 CODE_DIR_NAME="/home/ralager/aiwp_derived_fields/aiwp_derived_fields/scripts"
-OUTPUT_DIR_NAME="/mnt/mlnas01/ralager/era5_data_from_allie/derived_fields"
+INPUT_DIR_NAME="/mnt/mlnas01/ralager/era5_data_from_allie/derived_fields"
 
 INIT_TIME_STRINGS=("2023-04-07-00" "2023-04-07-06" "2023-04-07-12" "2023-04-07-18")
 
