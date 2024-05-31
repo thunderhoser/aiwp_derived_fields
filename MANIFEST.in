@@ -1,2 +1,3 @@
 include aiwp_derived_fields/io/era5_constants_global.nc
 include aiwp_derived_fields/io/borders_longitude-positive-in-west.nc
+include aiwp_derived_fields/slurm/

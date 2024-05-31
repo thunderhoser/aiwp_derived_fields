@@ -12,9 +12,6 @@ dist/
 .idea/
 *.iml
 
-# Slurm scripts.
-slurm/
-
 # Code that I don't intend to commit.
 aiwp_derived_fields/*.py
 aiwp_derived_fields/*.jpg
