@@ -1,9 +1,9 @@
 #!/bin/bash
 
-#SBATCH --job-name="compute_df_fourcastnet_mar2023"
-#SBATCH --partition="fge"
-#SBATCH --account="rda-ghpcs"
-#SBATCH --qos="gpuwf"
+#SBATCH --job-name="compute_df_graphcast_mar2023"
+#SBATCH --partition="bigmem"
+#SBATCH --account="gsd-hpcs"
+#SBATCH --qos="batch"
 #SBATCH --ntasks=1
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=1
@@ -18,7 +18,7 @@
 ##SBATCH --exclude=h29n01,h26n05,h28n06,h29n07,h30n03,h30n15
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --mail-user=ryan.lagerquist@noaa.gov
-#SBATCH --output=compute_df_fourcastnet_mar2023_%A_%a.out
+#SBATCH --output=compute_df_graphcast_mar2023_%A_%a.out
 
 conda init
 conda activate base
@@ -31,7 +31,7 @@ echo `which python3`
 echo $PATH
 
 CODE_DIR_NAME="/scratch1/RDARCH/rda-ghpcs/Ryan.Lagerquist/aiwp_derived_fields/aiwp_derived_fields/scripts"
-INPUT_DIR_NAME="/scratch2/STI/mdl-sti/Ryan.Lagerquist/noaa-oar-mlwp-data.s3.amazonaws.com/FOUR_v200"
+INPUT_DIR_NAME="/scratch2/STI/mdl-sti/Ryan.Lagerquist/noaa-oar-mlwp-data.s3.amazonaws.com/GRAP_v100"
 OUTPUT_DIR_NAME="/scratch2/STI/mdl-sti/Ryan.Lagerquist/noaa-oar-mlwp-data.s3.amazonaws.com/aiwp_derived_fields"
 
 INIT_TIME_STRINGS=("2023-03-01-00" "2023-03-01-06" "2023-03-01-12" "2023-03-01-18" "2023-03-02-00" "2023-03-02-06" "2023-03-02-12" "2023-03-02-18" "2023-03-03-00" "2023-03-03-06" "2023-03-03-12" "2023-03-03-18" "2023-03-04-00" "2023-03-04-06" "2023-03-04-12" "2023-03-04-18" "2023-03-05-00" "2023-03-05-06" "2023-03-05-12" "2023-03-05-18" "2023-03-06-00" "2023-03-06-06" "2023-03-06-12" "2023-03-06-18" "2023-03-07-00" "2023-03-07-06" "2023-03-07-12" "2023-03-07-18" "2023-03-08-00" "2023-03-08-06" "2023-03-08-12" "2023-03-08-18" "2023-03-09-00" "2023-03-09-06" "2023-03-09-12" "2023-03-09-18" "2023-03-10-00" "2023-03-10-06" "2023-03-10-12" "2023-03-10-18" "2023-03-11-00" "2023-03-11-06" "2023-03-11-12" "2023-03-11-18" "2023-03-12-00" "2023-03-12-06" "2023-03-12-12" "2023-03-12-18" "2023-03-13-00" "2023-03-13-06" "2023-03-13-12" "2023-03-13-18" "2023-03-14-00" "2023-03-14-06" "2023-03-14-12" "2023-03-14-18" "2023-03-15-00" "2023-03-15-06" "2023-03-15-12" "2023-03-15-18" "2023-03-16-00" "2023-03-16-06" "2023-03-16-12" "2023-03-16-18" "2023-03-17-00" "2023-03-17-06" "2023-03-17-12" "2023-03-17-18" "2023-03-18-00" "2023-03-18-06" "2023-03-18-12" "2023-03-18-18" "2023-03-19-00" "2023-03-19-06" "2023-03-19-12" "2023-03-19-18" "2023-03-20-00" "2023-03-20-06" "2023-03-20-12" "2023-03-20-18" "2023-03-21-00" "2023-03-21-06" "2023-03-21-12" "2023-03-21-18" "2023-03-22-00" "2023-03-22-06" "2023-03-22-12" "2023-03-22-18" "2023-03-23-00" "2023-03-23-06" "2023-03-23-12" "2023-03-23-18" "2023-03-24-00" "2023-03-24-06" "2023-03-24-12" "2023-03-24-18" "2023-03-25-00" "2023-03-25-06" "2023-03-25-12" "2023-03-25-18" "2023-03-26-00" "2023-03-26-06" "2023-03-26-12" "2023-03-26-18" "2023-03-27-00" "2023-03-27-06" "2023-03-27-12" "2023-03-27-18")
@@ -43,7 +43,7 @@ while [ $j -le $(( $SLURM_ARRAY_TASK_ID + 3 )) ] && [ $j -lt ${#INIT_TIME_STRING
     python3 -u "${CODE_DIR_NAME}/compute_derived_fields.py" \
     --derived_field_names "most-unstable-cape-j-kg01" "most-unstable-cin-j-kg01" "surface-based-cape-j-kg01" "surface-based-cin-j-kg01" "mixed-layer-cape-j-kg01_ml-depth-metres=500.0000" "mixed-layer-cin-j-kg01_ml-depth-metres=500.0000" "lifted-index-kelvins_top-pressure-pascals=50000" "precipitable-water-kg-m02_top-pressure-pascals=5000" "wind-shear-m-s01_top-pressure-pascals=50000_bottom-pressure-pascals=surface" "wind-shear-m-s01_top-pressure-pascals=85000_bottom-pressure-pascals=surface" "wind-shear-m-s01_top-pressure-pascals=20000_bottom-pressure-pascals=85000" "storm-relative-helicity-m2-s02_top-height-m-agl=3000.0000" "storm-relative-helicity-m2-s02_top-height-m-agl=1000.0000" "planetary-boundary-layer-height-m-agl" \
     --input_basic_field_dir_name="${INPUT_DIR_NAME}" \
-    --model_name="FOUR_v200" \
+    --model_name="GRAP_v100" \
     --init_time_string="${init_time_string}" \
     --do_multiprocessing=1 \
     --output_dir_name="${OUTPUT_DIR_NAME}"
